@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css" />
+  <title>ANA — Configurador de Modelo IA</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Syne:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+  
+  </style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<header>
+  <div class="logo">A<span>.</span>NA</div>
+  <span class="header-badge">Configurador de Modelo</span>
+  <button class="save-btn" onclick="saveConfig()">Guardar modelo</button>
+</header>
+
+<!-- ══ MAIN ══ -->
+<main>
+
+  <!-- ════ LEFT COLUMN — identidad del modelo ════ -->
+  <div>
+    <div class="card" style="animation-delay:.05s">
+      <div class="card-title"><span class="dot"></span>Identidad del modelo</div>
+
+      <div class="form-row">
+        <label>Nombre del modelo</label>
+        <input type="text" id="modelName" placeholder="Ej. Sofía, ARIA, MAX…" />
+      </div>
+
+      <div class="form-row">
+        <label>Color principal</label>
+        <div class="color-row">
+          <input type="color" id="modelColor" value="#3DBA65" oninput="syncColor(this)" />
+          <input class="color-hex" type="text" id="modelColorHex" value="#3DBA65" maxlength="7" oninput="syncHex(this)" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Personalidad / Tono</label>
+        <div class="chip-group" id="toneGroup">
+          <button class="chip active" onclick="toggleChip(this,'tone')">Profesional</button>
+          <button class="chip" onclick="toggleChip(this,'tone')">Amigable</button>
+          <button class="chip" onclick="toggleChip(this,'tone')">Técnico</button>
+          <button class="chip" onclick="toggleChip(this,'tone')">Empático</button>
+          <button class="chip" onclick="toggleChip(this,'tone')">Directo</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Voz</label>
+        <div class="chip-group" id="voiceGroup">
+          <button class="chip active" onclick="toggleChip(this,'voice')">Femenina</button>
+          <button class="chip" onclick="toggleChip(this,'voice')">Masculina</button>
+          <button class="chip" onclick="toggleChip(this,'voice')">Neutral</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Idioma principal</label>
+        <select id="modelLang">
+          <option>Español</option>
+          <option>English</option>
+          <option>Português</option>
+          <option>Francés</option>
+          <option>Italiano</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>Palabras clave de respuesta</label>
+        <div class="tag-container" id="tagContainer" onclick="focusTagInput()">
+          <input class="tag-input" id="tagInput" placeholder="Escribe y presiona Enter…"
+                 onkeydown="handleTagKey(event)" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label>Restricciones / Lo que NO debe decir</label>
+        <textarea id="restrictions" placeholder="Ej. No mencionar precios sin consultar, no discutir temas políticos…"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ CENTER COLUMN — orb + meta ════ -->
+  <div class="col-center">
+    <div class="orb-card">
+      <div class="orb-wrapper" data-tip="Haz clic para activar preview">
+        <div class="orb-ring"></div>
+        <div class="orb-ring-2"></div>
+        <div class="orb" id="mainOrb" onclick="activateOrb()"></div>
+      </div>
+      <div class="orb-label" id="orbLabel">Modelo sin nombre</div>
+      <div class="orb-status" id="orbStatus">En espera de configuración</div>
+    </div>
+
+    <div class="center-meta">
+      <div class="card" style="width:100%;animation-delay:.12s">
+        <div class="card-title"><span class="dot"></span>Empresa &amp; Rol</div>
+
+        <div class="form-row">
+          <label>Nombre de la empresa</label>
+          <input type="text" id="companyName" placeholder="Acme Corp." oninput="updateOrbMeta()" />
+        </div>
+
+        <div class="form-row">
+          <label>Rol del modelo</label>
+          <div class="role-grid" id="roleGrid">
+            <div class="role-card active" onclick="selectRole(this)">
+              <span class="role-emoji">🛒</span>
+              <span class="role-name">Vendedor</span>
+            </div>
+            <div class="role-card" onclick="selectRole(this)">
+              <span class="role-emoji">🔧</span>
+              <span class="role-name">Solucionador</span>
+            </div>
+            <div class="role-card" onclick="selectRole(this)">
+              <span class="role-emoji">📋</span>
+              <span class="role-name">Gestionador</span>
+            </div>
+            <div class="role-card" onclick="selectRole(this)">
+              <span class="role-emoji">📊</span>
+              <span class="role-name">Analizador</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ RIGHT COLUMN — información empresa ════ -->
+  <div>
+    <div class="card" style="animation-delay:.1s">
+      <div class="card-title"><span class="dot"></span>Información de la empresa</div>
+
+      <div class="form-row">
+        <label>¿A qué se dedica?</label>
+        <textarea id="companyBiz" placeholder="Describí brevemente el giro del negocio…"></textarea>
+      </div>
+
+      <div class="form-row">
+        <label>¿Qué hace la empresa?</label>
+        <textarea id="companyDoes" placeholder="Productos, servicios, propuesta de valor…"></textarea>
+      </div>
+
+      <div class="form-row">
+        <label>Visión</label>
+        <input type="text" id="companyVision" placeholder="¿Hacia dónde va la empresa?" />
+      </div>
+
+      <div class="form-row">
+        <label>Misión</label>
+        <input type="text" id="companyMission" placeholder="¿Por qué existe?" />
+      </div>
+
+      <div class="form-row">
+        <label>Valores</label>
+        <input type="text" id="companyValues" placeholder="Integridad, innovación, servicio…" />
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="form-row">
+        <label>Documentos de contexto</label>
+        <div class="doc-upload" id="docUpload">
+          <input type="file" multiple accept=".pdf,.doc,.docx,.txt,.csv" onchange="handleDocs(event)" />
+          <p>📎 Arrastrá o hacé clic para subir manuales, FAQs, catálogos…</p>
+        </div>
+        <div class="doc-list" id="docList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ BOTTOM — inventarios ════ -->
+  <div class="col-bottom">
+
+    <!-- Inventario propio -->
+    <div class="card" style="animation-delay:.2s">
+      <div class="card-title"><span class="dot"></span>Inventario propio</div>
+      <p style="font-size:.82rem;color:var(--ink-2);margin-bottom:16px;line-height:1.6">
+        Conectá el modelo a un inventario que hayas creado dentro de la plataforma.
+      </p>
+      <div class="inv-upload" id="ownInvDrop">
+        <input type="file" accept=".csv,.xlsx,.json" onchange="handleInvFile(event,'own')" />
+        <span class="inv-icon">🗂️</span>
+        <p>Subí tu archivo de inventario<br/><strong>.csv · .xlsx · .json</strong></p>
+        <div class="upload-name" id="ownInvName"></div>
+      </div>
+
+      <div style="margin-top:14px">
+        <label>O conectar por ID de inventario</label>
+        <input type="text" id="ownInvId" placeholder="INV-00042" />
+      </div>
+
+      <button class="connect-btn" id="ownConnectBtn" onclick="connectInv('own')">
+        Conectar inventario
+      </button>
+    </div>
+
+    <!-- Inventario externo -->
+    <div class="card" style="animation-delay:.24s">
+      <div class="card-title"><span class="dot"></span>Inventario externo</div>
+      <p style="font-size:.82rem;color:var(--ink-2);margin-bottom:16px;line-height:1.6">
+        Integrá una fuente de datos externa vía URL, API o archivo exportado.
+      </p>
+
+      <div class="form-row">
+        <label>URL de la API / Endpoint</label>
+        <input type="text" id="extUrl" placeholder="https://api.mitienda.com/products" />
+      </div>
+
+      <div class="form-row">
+        <label>API Key (opcional)</label>
+        <input type="text" id="extKey" placeholder="sk-…" />
+      </div>
+
+      <div class="inv-upload" id="extInvDrop" style="margin-top:4px">
+        <input type="file" accept=".csv,.xlsx,.json" onchange="handleInvFile(event,'ext')" />
+        <span class="inv-icon">🔗</span>
+        <p>O subí un export del sistema externo<br/><strong>.csv · .xlsx · .json</strong></p>
+        <div class="upload-name" id="extInvName"></div>
+      </div>
+
+      <button class="connect-btn" id="extConnectBtn" onclick="connectInv('ext')">
+        Conectar fuente externa
+      </button>
+    </div>
+
+  </div>
+</main>
+
+<!-- ══ SCRIPTS ══ -->
+<script src="script.js"></script>
+</body>
+</html>
