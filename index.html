@@ -6,9 +6,6 @@
   <link rel="stylesheet" href="style.css" />
   <title>ANA — Configurador de Modelo IA</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Syne:wght@400;600;700&display=swap" rel="stylesheet" />
-  <style>
-  
-  </style>
 </head>
 <body>
 
@@ -175,7 +172,7 @@
     </div>
   </div>
 
-  <!-- ════ BOTTOM — inventarios ════ -->
+  <!-- ════ BOTTOM — inventarios + redes ════ -->
   <div class="col-bottom">
 
     <!-- Inventario propio -->
@@ -229,6 +226,92 @@
         Conectar fuente externa
       </button>
     </div>
+
+    <!-- ════ REDES SOCIALES — full width ════ -->
+    <div class="card" style="animation-delay:.28s; grid-column: 1 / -1;">
+      <div class="card-title"><span class="dot"></span>Redes sociales del modelo</div>
+      <p style="font-size:.82rem;color:var(--ink-2);margin-bottom:20px;line-height:1.6">
+        Activá las redes que el modelo puede mencionar o compartir. Solo las que habilitás quedan visibles para el usuario.
+      </p>
+
+      <div class="social-grid" id="socialGrid">
+
+        <!-- Instagram -->
+        <div class="social-row" data-network="instagram">
+          <div class="social-icon" style="background:#fce4ec;">📸</div>
+          <div class="social-label-wrap">
+            <span class="social-name">Instagram</span>
+            <input class="social-url" type="text" placeholder="https://instagram.com/tuusuario"
+                   data-network="instagram" oninput="onSocialInput(this)" />
+            <span class="social-error">URL inválida. Usá el formato https://instagram.com/…</span>
+          </div>
+          <input class="social-toggle" type="checkbox" id="tog-instagram"
+                 data-network="instagram" onchange="onSocialToggle(this)" title="Activar Instagram" />
+        </div>
+
+        <!-- Facebook -->
+        <div class="social-row" data-network="facebook">
+          <div class="social-icon" style="background:#e3f2fd;">📘</div>
+          <div class="social-label-wrap">
+            <span class="social-name">Facebook</span>
+            <input class="social-url" type="text" placeholder="https://facebook.com/tupage"
+                   data-network="facebook" oninput="onSocialInput(this)" />
+            <span class="social-error">URL inválida. Usá el formato https://facebook.com/…</span>
+          </div>
+          <input class="social-toggle" type="checkbox" id="tog-facebook"
+                 data-network="facebook" onchange="onSocialToggle(this)" title="Activar Facebook" />
+        </div>
+
+        <!-- LinkedIn -->
+        <div class="social-row" data-network="linkedin">
+          <div class="social-icon" style="background:#e8f4fd;">💼</div>
+          <div class="social-label-wrap">
+            <span class="social-name">LinkedIn</span>
+            <input class="social-url" type="text" placeholder="https://linkedin.com/company/tuempresa"
+                   data-network="linkedin" oninput="onSocialInput(this)" />
+            <span class="social-error">URL inválida. Usá el formato https://linkedin.com/…</span>
+          </div>
+          <input class="social-toggle" type="checkbox" id="tog-linkedin"
+                 data-network="linkedin" onchange="onSocialToggle(this)" title="Activar LinkedIn" />
+        </div>
+
+        <!-- GitHub -->
+        <div class="social-row" data-network="github">
+          <div class="social-icon" style="background:#f3e5f5;">🐙</div>
+          <div class="social-label-wrap">
+            <span class="social-name">GitHub</span>
+            <input class="social-url" type="text" placeholder="https://github.com/tuorg"
+                   data-network="github" oninput="onSocialInput(this)" />
+            <span class="social-error">URL inválida. Usá el formato https://github.com/…</span>
+          </div>
+          <input class="social-toggle" type="checkbox" id="tog-github"
+                 data-network="github" onchange="onSocialToggle(this)" title="Activar GitHub" />
+        </div>
+
+        <!-- WhatsApp -->
+        <div class="social-row" data-network="whatsapp">
+          <div class="social-icon" style="background:#e8f5e9;">💬</div>
+          <div class="social-label-wrap">
+            <span class="social-name">WhatsApp</span>
+            <input class="social-url" type="text" placeholder="+549xxxxxxxxxx  ó  https://wa.me/549xxxxxxxxxx"
+                   data-network="whatsapp" oninput="onSocialInput(this)" />
+            <span class="social-error">Número o enlace inválido. Usá formato +549… o https://wa.me/…</span>
+          </div>
+          <input class="social-toggle" type="checkbox" id="tog-whatsapp"
+                 data-network="whatsapp" onchange="onSocialToggle(this)" title="Activar WhatsApp" />
+        </div>
+
+      </div><!-- /social-grid -->
+
+      <!-- Preview de redes activas -->
+      <div class="divider" style="margin-top:18px"></div>
+      <p class="social-preview-label">Redes visibles para el usuario</p>
+      <div class="social-preview" id="socialPreview">
+        <span class="social-preview-empty">Ninguna red habilitada aún.</span>
+      </div>
+
+    </div>
+    <!-- /redes sociales -->
 
   </div>
 </main>
