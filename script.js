@@ -146,7 +146,7 @@ const Security = {
 ───────────────────────────────────────────── */
 const ApiClient = {
   async saveConfig(data) {
-    const response = await fetch(`${CONFIG.BACKEND_URL}/save`, {
+    const response = await fetch(`${CONFIG.BACKEND_URL}`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(data),
