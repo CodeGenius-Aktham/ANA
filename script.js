@@ -156,7 +156,7 @@ const ApiClient = {
   },
 
   async loadEmpresa(empresaData) {
-    const response = await fetch(`${CONFIG.BACKEND_URL.replace('/api', '')}/load_empresa/cargar`, {
+    const response = await fetch(`${CONFIG.BACKEND_URL.replace('/api', '')}/load_empresa/carga`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(empresaData),
