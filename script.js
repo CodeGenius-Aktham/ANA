@@ -146,20 +146,26 @@ const Security = {
 ───────────────────────────────────────────── */
 const ApiClient = {
   async saveConfig(data) {
-    const response = await fetch(`${CONFIG.BACKEND_URL}`, {
+    const response = await fetch(`${CONFIG.BACKEND_URL}/carga`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(data),
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
+      body: JSON.stringify(data),
     });
     if (!response.ok) throw new Error(`Error del servidor: ${response.status}`);
     return await response.json();
   },
 
   async loadEmpresa(empresaData) {
-    const response = await fetch(`${CONFIG.BACKEND_URL.replace('/api', '')}/load_empresa/carga`, {
+    const response = await fetch(`${CONFIG.BACKEND_URL}/carga`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(empresaData),
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
+      body: JSON.stringify(empresaData),
     });
     if (!response.ok) throw new Error(`Error al cargar empresa: ${response.status}`);
     return await response.json();
