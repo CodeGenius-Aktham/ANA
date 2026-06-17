@@ -9,7 +9,7 @@
    CONFIG
 ───────────────────────────────────────────── */
 const CONFIG = {
-  BACKEND_URL: 'https://efd0-190-26-35-16.ngrok-free.app/empresa',
+  BACKEND_URL: 'https://3a2a-190-26-35-16.ngrok-free.app',
 
   // Longitudes máximas por campo (seguridad de input)
   MAX_LENGTHS: {
