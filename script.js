@@ -1,7 +1,7 @@
 /**
  * ══════════════════════════════════════════════
  *  ANA — Configurador de Modelo IA
- *  script.js
+ *  script.js  (hardened v2)
  * ══════════════════════════════════════════════
  */
 
@@ -11,7 +11,6 @@
 const CONFIG = {
   BACKEND_URL: 'https://17fc-186-28-189-44.ngrok-free.app/empresa',
 
-  // Longitudes máximas por campo (seguridad de input)
   MAX_LENGTHS: {
     modelName:      80,
     companyName:    120,
@@ -25,7 +24,6 @@ const CONFIG = {
     socialUrl:      300,
   },
 
-  // Patrones permitidos por red social
   SOCIAL_PATTERNS: {
     instagram: /^https:\/\/(www\.)?instagram\.com\/[a-zA-Z0-9_.]{1,50}\/?$/,
     facebook:  /^https:\/\/(www\.)?facebook\.com\/[a-zA-Z0-9_.%-]{1,100}\/?$/,
@@ -34,7 +32,6 @@ const CONFIG = {
     whatsapp:  /^(\+\d{7,15}|https:\/\/(wa\.me|api\.whatsapp\.com\/send)\/.+)$/,
   },
 
-  // Tipos de archivo permitidos por sección
   ALLOWED_DOC_TYPES:  ['.pdf','.doc','.docx','.txt','.csv'],
   ALLOWED_INV_TYPES:  ['.csv','.xlsx','.json'],
   MAX_FILE_SIZE_MB:   10,
@@ -70,31 +67,49 @@ const state = {
    UTILIDADES DE SEGURIDAD
 ───────────────────────────────────────────── */
 const Security = {
-  /** Elimina HTML/scripts de un string */
-  sanitize(str) {
+
+  /**
+   * Limpia un string para uso seguro dentro de JSON.
+   * Elimina:
+   *   - Caracteres de control ASCII (U+0000–U+001F, U+007F)
+   *   - Separadores de línea unicode que rompen algunos parsers JSON
+   *     (U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR)
+   *   - Caracteres nulos embebidos
+   * NO codifica HTML; ese contexto lo maneja el DOM directamente.
+   */
+  cleanForJson(str) {
     if (typeof str !== 'string') return '';
     return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#x27;')
-      .replace(/\//g, '&#x2F;');
+      // Caracteres de control ASCII excepto \t (U+0009), \n (U+000A), \r (U+000D)
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      // Separadores de línea unicode (peligrosos en JSON embebido en JS)
+      .replace(/\u2028|\u2029/g, '')
+      // Nulos embebidos
+      .replace(/\0/g, '');
   },
 
-  /** Recorta al límite indicado y elimina caracteres de control */
+  /**
+   * Recorta al límite indicado DESPUÉS de limpiar para JSON.
+   * Uso: cualquier string que termine en el payload.
+   */
   truncate(str, maxLen) {
     if (typeof str !== 'string') return '';
-    // eliminar caracteres de control (excepto \n, \r, \t)
-    str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
-    return str.slice(0, maxLen);
+    return Security.cleanForJson(str).slice(0, maxLen);
   },
 
-  /** Valida extensión y tamaño de un File */
+  /**
+   * Limpia para JSON y también recorta.
+   * Alias semántico para mayor claridad en los puntos de llamada.
+   */
+  sanitizeForJson(str, maxLen) {
+    return Security.truncate(str, maxLen ?? Infinity);
+  },
+
+  /** Valida extensión y tamaño de un File. */
   validateFile(file, allowedExts) {
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (!allowedExts.includes(ext)) {
-      return { ok: false, msg: `Tipo de archivo no permitido. Permitidos: ${allowedExts.join(', ')}` };
+      return { ok: false, msg: `Tipo no permitido. Permitidos: ${allowedExts.join(', ')}` };
     }
     if (file.size > CONFIG.MAX_FILE_SIZE_MB * 1024 * 1024) {
       return { ok: false, msg: `El archivo supera el límite de ${CONFIG.MAX_FILE_SIZE_MB} MB.` };
@@ -102,40 +117,46 @@ const Security = {
     return { ok: true };
   },
 
-  /** Valida la URL de una red social según su patrón */
+  /** Valida la URL de una red social según su patrón. */
   validateSocialUrl(network, value) {
-    if (!value) return true; // vacío es válido (se desactiva)
+    if (!value) return true;
     const pattern = CONFIG.SOCIAL_PATTERNS[network];
     return pattern ? pattern.test(value.trim()) : false;
   },
 
-  /** Construye el objeto a enviar al backend (sin datos sensibles en claro) */
+  /** Valida que un color sea un hex válido de 6 dígitos. */
+  validateColor(color) {
+    return /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#3DBA65';
+  },
+
+  /** Construye el payload seguro para el backend. */
   buildPayload() {
     const activeSocials = {};
     for (const [net, data] of Object.entries(state.socials)) {
       if (data.enabled && data.url) {
-        activeSocials[net] = Security.sanitize(data.url);
+        // URL ya fue validada al ingresarla; la limpiamos para JSON igualmente
+        activeSocials[net] = Security.sanitizeForJson(data.url, CONFIG.MAX_LENGTHS.socialUrl);
       }
     }
 
     return {
-      name:        Security.truncate(state.name, CONFIG.MAX_LENGTHS.modelName),
-      company:     Security.truncate(state.company, CONFIG.MAX_LENGTHS.companyName),
-      color:       /^#[0-9A-Fa-f]{6}$/.test(state.color) ? state.color : '#3DBA65',
-      tone:        state.tone,
-      voice:       state.voice,
-      lang:        state.lang,
-      tags:        state.tags.map(t => Security.truncate(t, CONFIG.MAX_LENGTHS.tag)),
-      restrictions:Security.truncate(state.restrictions, CONFIG.MAX_LENGTHS.restrictions),
-      role:        state.role,
+      name:        Security.sanitizeForJson(state.name,         CONFIG.MAX_LENGTHS.modelName),
+      company:     Security.sanitizeForJson(state.company,      CONFIG.MAX_LENGTHS.companyName),
+      color:       Security.validateColor(state.color),
+      tone:        state.tone.map(t  => Security.sanitizeForJson(t, 50)),
+      voice:       state.voice.map(v => Security.sanitizeForJson(v, 50)),
+      lang:        Security.sanitizeForJson(state.lang, 50),
+      tags:        state.tags.map(t  => Security.sanitizeForJson(t, CONFIG.MAX_LENGTHS.tag)),
+      restrictions:Security.sanitizeForJson(state.restrictions, CONFIG.MAX_LENGTHS.restrictions),
+      role:        Security.sanitizeForJson(state.role, 80),
       companyInfo: {
-        biz:     Security.truncate(state.companyInfo.biz     || '', CONFIG.MAX_LENGTHS.companyBiz),
-        does:    Security.truncate(state.companyInfo.does    || '', CONFIG.MAX_LENGTHS.companyDoes),
-        vision:  Security.truncate(state.companyInfo.vision  || '', CONFIG.MAX_LENGTHS.companyVision),
-        mission: Security.truncate(state.companyInfo.mission || '', CONFIG.MAX_LENGTHS.companyMission),
-        values:  Security.truncate(state.companyInfo.values  || '', CONFIG.MAX_LENGTHS.companyValues),
+        biz:     Security.sanitizeForJson(state.companyInfo.biz     || '', CONFIG.MAX_LENGTHS.companyBiz),
+        does:    Security.sanitizeForJson(state.companyInfo.does    || '', CONFIG.MAX_LENGTHS.companyDoes),
+        vision:  Security.sanitizeForJson(state.companyInfo.vision  || '', CONFIG.MAX_LENGTHS.companyVision),
+        mission: Security.sanitizeForJson(state.companyInfo.mission || '', CONFIG.MAX_LENGTHS.companyMission),
+        values:  Security.sanitizeForJson(state.companyInfo.values  || '', CONFIG.MAX_LENGTHS.companyValues),
       },
-      socials: activeSocials,
+      socials:  activeSocials,
       isActive: state.isActive,
     };
   },
@@ -148,35 +169,43 @@ const ApiClient = {
   async saveConfig(data) {
     const response = await fetch(`${CONFIG.BACKEND_URL}/carga`, {
       method:  'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true'
+        'ngrok-skip-browser-warning': 'true',
       },
       body: JSON.stringify(data),
     });
     if (!response.ok) throw new Error(`Error del servidor: ${response.status}`);
-    return await response.json();
-  },
-
-  async loadEmpresa(empresaData) {
-    const response = await fetch(`${CONFIG.BACKEND_URL}/carga`, {
-      method:  'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true'
-      },
-      body: JSON.stringify(empresaData),
-    });
-    if (!response.ok) throw new Error(`Error al cargar empresa: ${response.status}`);
-    return await response.json();
+    return response.json();
   },
 };
+
+/* ─────────────────────────────────────────────
+   DOM HELPERS — sin innerHTML con datos del usuario
+───────────────────────────────────────────── */
+
+/** Crea un elemento de forma segura, sin innerHTML. */
+function createElement(tag, props = {}, children = []) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'className')       el.className = v;
+    else if (k === 'textContent') el.textContent = v;
+    else if (k === 'title')      el.title = v;
+    else if (k === 'href')       el.href = v;
+    else if (k === 'target')     el.target = v;
+    else if (k === 'rel')        el.rel = v;
+    else if (k === 'ariaLabel')  el.setAttribute('aria-label', v);
+    else                          el.setAttribute(k, v);
+  }
+  for (const child of children) el.appendChild(child);
+  return el;
+}
 
 /* ─────────────────────────────────────────────
    UI HELPERS
 ───────────────────────────────────────────── */
 function updateOrbMeta() {
-  state.company = Security.truncate(
+  state.company = Security.sanitizeForJson(
     document.getElementById('companyName').value.trim(),
     CONFIG.MAX_LENGTHS.companyName
   );
@@ -187,7 +216,7 @@ function renderOrb() {
   document.getElementById('orbLabel').textContent  = state.name;
   document.getElementById('orbStatus').textContent = state.isActive
     ? '● Modelo activo'
-    : (state.company ? `Activo · ${Security.sanitize(state.company)}` : 'En espera de configuración');
+    : (state.company ? `Activo · ${state.company}` : 'En espera de configuración');
 
   const c = state.color;
   document.getElementById('mainOrb').style.background =
@@ -198,8 +227,8 @@ function renderOrb() {
    COLOR SYNC
 ───────────────────────────────────────────── */
 function syncColor(input) {
-  state.color = input.value;
-  document.getElementById('modelColorHex').value = input.value;
+  state.color = Security.validateColor(input.value);
+  document.getElementById('modelColorHex').value = state.color;
   renderOrb();
 }
 
@@ -220,10 +249,11 @@ function toggleChip(btn, group) {
   if (group === 'voice') {
     container.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
-    state.voice = [btn.textContent.trim()];
+    state.voice = [Security.sanitizeForJson(btn.textContent.trim(), 50)];
   } else {
     btn.classList.toggle('active');
-    state.tone = [...container.querySelectorAll('.chip.active')].map(c => c.textContent.trim());
+    state.tone = [...container.querySelectorAll('.chip.active')]
+      .map(c => Security.sanitizeForJson(c.textContent.trim(), 50));
   }
 }
 
@@ -233,12 +263,18 @@ function toggleChip(btn, group) {
 function selectRole(card) {
   document.querySelectorAll('.role-card').forEach(c => c.classList.remove('active'));
   card.classList.add('active');
-  state.role = card.querySelector('.role-name').textContent.trim();
+  state.role = Security.sanitizeForJson(
+    card.querySelector('.role-name').textContent.trim(),
+    80
+  );
 }
 
 /* ─────────────────────────────────────────────
    TAGS
+   Uso de WeakMap para asociar tags a botones sin exponer datos en atributos.
 ───────────────────────────────────────────── */
+const tagButtonMap = new Map(); // tag string → button element
+
 function focusTagInput() {
   document.getElementById('tagInput').focus();
 }
@@ -246,13 +282,14 @@ function focusTagInput() {
 function handleTagKey(e) {
   if (e.key !== 'Enter' && e.key !== ',') return;
   e.preventDefault();
+
   const input = e.target;
   const raw   = input.value.trim();
   if (!raw) return;
 
-  const tag = Security.truncate(raw, CONFIG.MAX_LENGTHS.tag);
-  if (state.tags.includes(tag)) { input.value = ''; return; }
-  if (state.tags.length >= 20) return; // límite de tags
+  const tag = Security.sanitizeForJson(raw, CONFIG.MAX_LENGTHS.tag);
+  if (!tag || state.tags.includes(tag)) { input.value = ''; return; }
+  if (state.tags.length >= 20) return;
 
   state.tags.push(tag);
   renderTag(tag);
@@ -261,42 +298,69 @@ function handleTagKey(e) {
 
 function renderTag(tag) {
   const container = document.getElementById('tagContainer');
-  const el = document.createElement('span');
-  el.className = 'tag';
-  el.innerHTML = `${Security.sanitize(tag)}<button onclick="removeTag(this,'${Security.sanitize(tag)}')" aria-label="Eliminar tag ${Security.sanitize(tag)}">×</button>`;
+
+  // Botón de eliminar — sin atributos que contengan el valor del tag
+  const removeBtn = createElement('button', { ariaLabel: `Eliminar tag ${tag}` });
+  removeBtn.textContent = '×';
+  removeBtn.addEventListener('click', () => removeTag(removeBtn, tag));
+
+  const el = createElement('span', { className: 'tag' }, [removeBtn]);
+  // Insertar el texto ANTES del botón usando un TextNode
+  el.insertBefore(document.createTextNode(tag), removeBtn);
+
   container.insertBefore(el, document.getElementById('tagInput'));
+  tagButtonMap.set(tag, el);
 }
 
 function removeTag(btn, tag) {
-  btn.parentElement.remove();
+  const el = btn.closest('.tag') || tagButtonMap.get(tag);
+  if (el) el.remove();
+  tagButtonMap.delete(tag);
   state.tags = state.tags.filter(t => t !== tag);
 }
 
 /* ─────────────────────────────────────────────
    DOCS
 ───────────────────────────────────────────── */
+const docElementMap = new Map(); // filename → DOM element
+
 function handleDocs(event) {
   const files = Array.from(event.target.files);
   files.forEach(file => {
     const check = Security.validateFile(file, CONFIG.ALLOWED_DOC_TYPES);
     if (!check.ok) { alert(check.msg); return; }
-    if (state.docs.find(d => d.name === file.name)) return; // deduplicar
-    state.docs.push({ name: file.name, size: file.size });
-    renderDocItem(file.name);
+
+    // Sanitizar nombre antes de almacenar (nunca va a HTML directamente)
+    const safeName = Security.sanitizeForJson(file.name, 255);
+    if (!safeName || state.docs.find(d => d.name === safeName)) return;
+
+    state.docs.push({ name: safeName, size: file.size });
+    renderDocItem(safeName);
   });
 }
 
 function renderDocItem(name) {
   const list = document.getElementById('docList');
-  const item = document.createElement('div');
-  item.className = 'doc-item';
-  item.innerHTML = `<span title="${Security.sanitize(name)}">${Security.sanitize(name)}</span>
-    <button class="doc-remove" onclick="removeDoc(this,'${Security.sanitize(name)}')" aria-label="Eliminar ${Security.sanitize(name)}">×</button>`;
+
+  const removeBtn = createElement('button', {
+    className: 'doc-remove',
+    ariaLabel: `Eliminar ${name}`,
+  });
+  removeBtn.textContent = '×';
+  removeBtn.addEventListener('click', () => removeDoc(removeBtn, name));
+
+  const nameSpan = createElement('span', { title: name });
+  nameSpan.textContent = name;
+
+  const item = createElement('div', { className: 'doc-item' }, [nameSpan, removeBtn]);
   list.appendChild(item);
+  docElementMap.set(name, item);
 }
 
 function removeDoc(btn, name) {
-  btn.parentElement.remove();
+  const el = docElementMap.get(name) || btn.closest('.doc-item');
+  if (el) el.remove();
+  docElementMap.delete(name);
   state.docs = state.docs.filter(d => d.name !== name);
 }
 
@@ -304,16 +368,18 @@ function removeDoc(btn, name) {
    INVENTARIO
 ───────────────────────────────────────────── */
 function handleInvFile(event, type) {
-  const file  = event.target.files[0];
+  const file = event.target.files[0];
   if (!file) return;
+
   const check = Security.validateFile(file, CONFIG.ALLOWED_INV_TYPES);
   if (!check.ok) { alert(check.msg); event.target.value = ''; return; }
 
-  const nameEl = document.getElementById(type === 'own' ? 'ownInvName' : 'extInvName');
-  nameEl.textContent = file.name;
+  const safeName = Security.sanitizeForJson(file.name, 255);
+  const nameEl   = document.getElementById(type === 'own' ? 'ownInvName' : 'extInvName');
+  nameEl.textContent = safeName;   // textContent, nunca innerHTML
   nameEl.style.display = 'block';
 
-  if (type === 'own') state.inventory.own = { name: file.name, size: file.size };
+  if (type === 'own') state.inventory.own = { name: safeName, size: file.size };
 }
 
 function connectInv(type) {
@@ -321,7 +387,7 @@ function connectInv(type) {
   btn.classList.toggle('connected');
   btn.textContent = btn.classList.contains('connected')
     ? (type === 'own' ? '✓ Inventario conectado' : '✓ Fuente conectada')
-    : (type === 'own' ? 'Conectar inventario' : 'Conectar fuente externa');
+    : (type === 'own' ? 'Conectar inventario'    : 'Conectar fuente externa');
 }
 
 /* ─────────────────────────────────────────────
@@ -335,48 +401,40 @@ function activateOrb() {
 /* ─────────────────────────────────────────────
    REDES SOCIALES
 ───────────────────────────────────────────── */
-
-/** Se llama al cambiar el valor de una URL de red social */
 function onSocialInput(input) {
   const network = input.dataset.network;
-  const value   = Security.truncate(input.value, CONFIG.MAX_LENGTHS.socialUrl);
-  input.value   = value; // refleja el truncado
+  // Truncar primero para que el campo no acumule basura
+  const value   = Security.sanitizeForJson(input.value, CONFIG.MAX_LENGTHS.socialUrl);
+  input.value   = value;
 
   state.socials[network].url = value;
 
-  const row = input.closest('.social-row');
+  const row    = input.closest('.social-row');
   const toggle = document.getElementById(`tog-${network}`);
 
-  if (value && !Security.validateSocialUrl(network, value)) {
+  const isValid = Security.validateSocialUrl(network, value);
+
+  if (value && !isValid) {
     row.classList.add('has-error');
-    // Si la URL es inválida, deshabilitar el toggle y desactivar
-    toggle.checked = false;
+    toggle.checked  = false;
     toggle.disabled = true;
     state.socials[network].enabled = false;
   } else {
     row.classList.remove('has-error');
     toggle.disabled = false;
-    // Si hay URL válida, activar automáticamente
-    if (value) {
-      toggle.checked = true;
-      state.socials[network].enabled = true;
-    } else {
-      // URL vacía — desactivar
-      toggle.checked = false;
-      state.socials[network].enabled = false;
-    }
+    toggle.checked  = !!value;
+    state.socials[network].enabled = !!value;
   }
+
   renderSocialPreview();
 }
 
-/** Se llama al cambiar el toggle de una red social */
 function onSocialToggle(toggle) {
-  const network = toggle.dataset.network;
-  const row     = toggle.closest('.social-row');
+  const network  = toggle.dataset.network;
+  const row      = toggle.closest('.social-row');
   const urlInput = row.querySelector('.social-url');
-  const url      = urlInput.value.trim();
+  const url      = Security.sanitizeForJson(urlInput.value.trim(), CONFIG.MAX_LENGTHS.socialUrl);
 
-  // No permitir activar sin URL válida
   if (toggle.checked) {
     if (!url) {
       alert('Ingresá una URL antes de activar esta red.');
@@ -389,11 +447,12 @@ function onSocialToggle(toggle) {
       return;
     }
   }
+
   state.socials[network].enabled = toggle.checked;
   renderSocialPreview();
 }
 
-/** Renderiza las píldoras de preview de redes activas */
+/** Renderiza las píldoras de redes activas — sin innerHTML con datos del usuario. */
 function renderSocialPreview() {
   const container = document.getElementById('socialPreview');
   const LABELS = {
@@ -407,15 +466,31 @@ function renderSocialPreview() {
   const active = Object.entries(state.socials)
     .filter(([, data]) => data.enabled && data.url);
 
+  // Limpiar el contenedor de forma segura
+  while (container.firstChild) container.removeChild(container.firstChild);
+
   if (!active.length) {
-    container.innerHTML = '<span class="social-preview-empty">Ninguna red habilitada aún.</span>';
+    const empty = createElement('span', { className: 'social-preview-empty' });
+    empty.textContent = 'Ninguna red habilitada aún.';
+    container.appendChild(empty);
     return;
   }
 
-  container.innerHTML = active.map(([net, data]) => {
-    const safeUrl = Security.sanitize(data.url);
-    return `<a class="social-pill" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${LABELS[net]}</a>`;
-  }).join('');
+  for (const [net, data] of active) {
+    // La URL ya fue validada con la regex estricta de cada red;
+    // aun así la pasamos por sanitizeForJson antes de ponerla en href.
+    const safeUrl = Security.sanitizeForJson(data.url, CONFIG.MAX_LENGTHS.socialUrl);
+
+    // Defensa extra: sólo permitir URLs que comiencen con https://
+    const pill = createElement('a', {
+      className: 'social-pill',
+      href:      safeUrl.startsWith('https://') ? safeUrl : '#',
+      target:    '_blank',
+      rel:       'noopener noreferrer',
+    });
+    pill.textContent = LABELS[net];
+    container.appendChild(pill);
+  }
 }
 
 /* ─────────────────────────────────────────────
@@ -424,7 +499,7 @@ function renderSocialPreview() {
 async function saveConfig() {
   const btn = document.querySelector('.save-btn');
 
-  // Validar todas las redes habilitadas antes de guardar
+  // Validar redes habilitadas
   for (const [net, data] of Object.entries(state.socials)) {
     if (data.enabled && !Security.validateSocialUrl(net, data.url)) {
       alert(`La URL de ${net} no es válida. Corregila antes de guardar.`);
@@ -432,16 +507,26 @@ async function saveConfig() {
     }
   }
 
-  // Recopilar campos del DOM al estado antes de enviar
-  state.name        = Security.truncate(document.getElementById('modelName').value.trim() || 'Modelo sin nombre', CONFIG.MAX_LENGTHS.modelName);
-  state.lang        = document.getElementById('modelLang').value;
-  state.restrictions= Security.truncate(document.getElementById('restrictions').value, CONFIG.MAX_LENGTHS.restrictions);
-  state.companyInfo = {
+  // Volcar DOM → estado con sanitización
+  state.name     = Security.sanitizeForJson(
+    document.getElementById('modelName').value.trim() || 'Modelo sin nombre',
+    CONFIG.MAX_LENGTHS.modelName
+  );
+  state.lang     = Security.sanitizeForJson(
+    document.getElementById('modelLang').value,
+    50
+  );
+  state.restrictions = Security.sanitizeForJson(
+    document.getElementById('restrictions').value,
+    CONFIG.MAX_LENGTHS.restrictions
+  );
+  state.companyInfo  = {
     biz:     document.getElementById('companyBiz').value,
     does:    document.getElementById('companyDoes').value,
     vision:  document.getElementById('companyVision').value,
     mission: document.getElementById('companyMission').value,
     values:  document.getElementById('companyValues').value,
+    // La sanitización final ocurre en buildPayload()
   };
 
   const payload = Security.buildPayload();
@@ -452,10 +537,10 @@ async function saveConfig() {
   try {
     await ApiClient.saveConfig(payload);
     btn.textContent = `✓ ${state.name} guardado`;
-    setTimeout(() => { btn.textContent = 'Guardar modelo'; btn.disabled = false; }, 3000);
   } catch (err) {
-    console.error(err);
+    console.error('[ANA] saveConfig error:', err);
     btn.textContent = 'Error al guardar';
+  } finally {
     setTimeout(() => { btn.textContent = 'Guardar modelo'; btn.disabled = false; }, 3000);
   }
 }
@@ -465,33 +550,33 @@ async function saveConfig() {
 ───────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
 
-  /* Nombre del modelo → orb */
   document.getElementById('modelName').addEventListener('input', e => {
-    state.name = Security.truncate(e.target.value.trim() || 'Modelo sin nombre', CONFIG.MAX_LENGTHS.modelName);
+    state.name = Security.sanitizeForJson(
+      e.target.value.trim() || 'Modelo sin nombre',
+      CONFIG.MAX_LENGTHS.modelName
+    );
     renderOrb();
   });
 
-  /* Color → orb */
   document.getElementById('modelColor').addEventListener('input', e => {
-    state.color = e.target.value;
-    document.getElementById('modelColorHex').value = e.target.value;
+    state.color = Security.validateColor(e.target.value);
+    document.getElementById('modelColorHex').value = state.color;
     renderOrb();
   });
 
-  /* Empresa → orb */
-  document.getElementById('companyName').addEventListener('input', () => updateOrbMeta());
+  document.getElementById('companyName').addEventListener('input', updateOrbMeta);
 
-  /* Idioma */
   document.getElementById('modelLang').addEventListener('change', e => {
-    state.lang = e.target.value;
+    state.lang = Security.sanitizeForJson(e.target.value, 50);
   });
 
-  /* Restricciones */
   document.getElementById('restrictions').addEventListener('input', e => {
-    state.restrictions = Security.truncate(e.target.value, CONFIG.MAX_LENGTHS.restrictions);
+    state.restrictions = Security.sanitizeForJson(
+      e.target.value,
+      CONFIG.MAX_LENGTHS.restrictions
+    );
   });
 
-  /* Drag & drop visual para uploads */
   ['ownInvDrop','extInvDrop'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
