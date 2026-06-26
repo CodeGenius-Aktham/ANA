@@ -1,7 +1,7 @@
 /**
  * ══════════════════════════════════════════════
  *  ANA — Configurador de Modelo IA
- *  script.js  (hardened v2)
+ *  script.js  (hardened v3 · dual-client)
  * ══════════════════════════════════════════════
  */
 
@@ -9,7 +9,12 @@
    CONFIG
 ───────────────────────────────────────────── */
 const CONFIG = {
-  BACKEND_URL: 'https://17fc-186-28-189-44.ngrok-free.app/empresa',
+  /**
+   * Base de la API. Todos los clientes lo usan.
+   * El endpoint de carga es: BASE_URL + /empresa/carga
+   * Los demás endpoints se construyen desde BASE_URL directamente.
+   */
+  BASE_URL: 'https://17fc-186-28-189-44.ngrok-free.app',
 
   MAX_LENGTHS: {
     modelName:      80,
@@ -32,28 +37,28 @@ const CONFIG = {
     whatsapp:  /^(\+\d{7,15}|https:\/\/(wa\.me|api\.whatsapp\.com\/send)\/.+)$/,
   },
 
-  ALLOWED_DOC_TYPES:  ['.pdf','.doc','.docx','.txt','.csv'],
-  ALLOWED_INV_TYPES:  ['.csv','.xlsx','.json'],
-  MAX_FILE_SIZE_MB:   10,
+  ALLOWED_DOC_TYPES: ['.pdf', '.doc', '.docx', '.txt', '.csv'],
+  ALLOWED_INV_TYPES: ['.csv', '.xlsx', '.json'],
+  MAX_FILE_SIZE_MB:  10,
 };
 
 /* ─────────────────────────────────────────────
    ESTADO
 ───────────────────────────────────────────── */
 const state = {
-  name:        'Modelo sin nombre',
-  company:     '',
-  color:       '#3DBA65',
-  tone:        ['Profesional'],
-  voice:       ['Femenina'],
-  lang:        'Español',
-  tags:        [],
-  restrictions:'',
-  role:        'Vendedor',
-  companyInfo: {},
-  docs:        [],
-  inventory:   { own: null, external: { url: '', key: '' } },
-  socials:     {
+  name:         'Modelo sin nombre',
+  company:      '',
+  color:        '#3DBA65',
+  tone:         ['Profesional'],
+  voice:        ['Femenina'],
+  lang:         'Español',
+  tags:         [],
+  restrictions: '',
+  role:         'Vendedor',
+  companyInfo:  {},
+  docs:         [],
+  inventory:    { own: null, external: { url: '', key: '' } },
+  socials: {
     instagram: { enabled: false, url: '' },
     facebook:  { enabled: false, url: '' },
     linkedin:  { enabled: false, url: '' },
@@ -72,35 +77,22 @@ const Security = {
    * Limpia un string para uso seguro dentro de JSON.
    * Elimina:
    *   - Caracteres de control ASCII (U+0000–U+001F, U+007F)
-   *   - Separadores de línea unicode que rompen algunos parsers JSON
-   *     (U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR)
+   *   - Separadores de línea unicode (U+2028, U+2029)
    *   - Caracteres nulos embebidos
-   * NO codifica HTML; ese contexto lo maneja el DOM directamente.
    */
   cleanForJson(str) {
     if (typeof str !== 'string') return '';
     return str
-      // Caracteres de control ASCII excepto \t (U+0009), \n (U+000A), \r (U+000D)
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-      // Separadores de línea unicode (peligrosos en JSON embebido en JS)
       .replace(/\u2028|\u2029/g, '')
-      // Nulos embebidos
       .replace(/\0/g, '');
   },
 
-  /**
-   * Recorta al límite indicado DESPUÉS de limpiar para JSON.
-   * Uso: cualquier string que termine en el payload.
-   */
   truncate(str, maxLen) {
     if (typeof str !== 'string') return '';
     return Security.cleanForJson(str).slice(0, maxLen);
   },
 
-  /**
-   * Limpia para JSON y también recorta.
-   * Alias semántico para mayor claridad en los puntos de llamada.
-   */
   sanitizeForJson(str, maxLen) {
     return Security.truncate(str, maxLen ?? Infinity);
   },
@@ -134,21 +126,20 @@ const Security = {
     const activeSocials = {};
     for (const [net, data] of Object.entries(state.socials)) {
       if (data.enabled && data.url) {
-        // URL ya fue validada al ingresarla; la limpiamos para JSON igualmente
         activeSocials[net] = Security.sanitizeForJson(data.url, CONFIG.MAX_LENGTHS.socialUrl);
       }
     }
 
     return {
-      name:        Security.sanitizeForJson(state.name,         CONFIG.MAX_LENGTHS.modelName),
-      company:     Security.sanitizeForJson(state.company,      CONFIG.MAX_LENGTHS.companyName),
-      color:       Security.validateColor(state.color),
-      tone:        state.tone.map(t  => Security.sanitizeForJson(t, 50)),
-      voice:       state.voice.map(v => Security.sanitizeForJson(v, 50)),
-      lang:        Security.sanitizeForJson(state.lang, 50),
-      tags:        state.tags.map(t  => Security.sanitizeForJson(t, CONFIG.MAX_LENGTHS.tag)),
-      restrictions:Security.sanitizeForJson(state.restrictions, CONFIG.MAX_LENGTHS.restrictions),
-      role:        Security.sanitizeForJson(state.role, 80),
+      name:         Security.sanitizeForJson(state.name,         CONFIG.MAX_LENGTHS.modelName),
+      company:      Security.sanitizeForJson(state.company,      CONFIG.MAX_LENGTHS.companyName),
+      color:        Security.validateColor(state.color),
+      tone:         state.tone.map(t  => Security.sanitizeForJson(t, 50)),
+      voice:        state.voice.map(v => Security.sanitizeForJson(v, 50)),
+      lang:         Security.sanitizeForJson(state.lang, 50),
+      tags:         state.tags.map(t  => Security.sanitizeForJson(t, CONFIG.MAX_LENGTHS.tag)),
+      restrictions: Security.sanitizeForJson(state.restrictions, CONFIG.MAX_LENGTHS.restrictions),
+      role:         Security.sanitizeForJson(state.role, 80),
       companyInfo: {
         biz:     Security.sanitizeForJson(state.companyInfo.biz     || '', CONFIG.MAX_LENGTHS.companyBiz),
         does:    Security.sanitizeForJson(state.companyInfo.does    || '', CONFIG.MAX_LENGTHS.companyDoes),
@@ -163,39 +154,134 @@ const Security = {
 };
 
 /* ─────────────────────────────────────────────
-   API CLIENT
+   UPLOAD CLIENT
+   Para multipart/form-data — usa XHR para poder
+   trackear progreso de subida de archivos.
+
+   Uso:
+     UploadClient.post('/empresa/carga', formData)
+     UploadClient.post('/empresa/carga', formData, (pct) => console.log(pct + '%'))
 ───────────────────────────────────────────── */
-const ApiClient = {
-  async saveConfig(data) {
-    const response = await fetch(`${CONFIG.BACKEND_URL}/carga`, {
-      method:  'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
-      },
-      body: JSON.stringify(data),
+const UploadClient = (() => {
+
+  /**
+   * @param {string}   path        — ruta relativa al BASE_URL
+   * @param {FormData} formData    — datos multipart
+   * @param {Function} [onProgress] — callback(porcentaje: number)
+   * @returns {Promise<any>}       — respuesta JSON del servidor
+   */
+  const post = (path, formData, onProgress = null) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${CONFIG.BASE_URL}${path}`);
+
+      // Headers sin Content-Type: el browser lo pone solo con el boundary correcto
+      xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
+      // xhr.setRequestHeader('Authorization', `Bearer ${getToken()}`);
+
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            onProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        });
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            resolve({ raw: xhr.responseText });
+          }
+        } else {
+          reject(new Error(`[UploadClient] HTTP ${xhr.status} en ${path}`));
+        }
+      };
+
+      xhr.onerror   = () => reject(new Error('[UploadClient] Error de red'));
+      xhr.ontimeout = () => reject(new Error('[UploadClient] Timeout'));
+      xhr.timeout   = 60_000; // 60 s para archivos grandes
+
+      xhr.send(formData);
     });
-    if (!response.ok) throw new Error(`Error del servidor: ${response.status}`);
+  };
+
+  return { post };
+})();
+
+/* ─────────────────────────────────────────────
+   API CLIENT
+   Para endpoints JSON (GET / POST / PUT / PATCH / DELETE).
+   No manejes archivos desde acá; usá UploadClient para eso.
+
+   Uso:
+     ApiClient.post('/empresa/carga', payload)
+     ApiClient.get('/modelos/42')
+     ApiClient.put('/modelos/42', payload)
+     ApiClient.patch('/modelos/42', { isActive: true })
+     ApiClient.delete('/modelos/42')
+───────────────────────────────────────────── */
+const ApiClient = (() => {
+
+  const headers = () => ({
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true',
+    // 'Authorization': `Bearer ${getToken()}`,
+  });
+
+  const request = async (method, path, body = null) => {
+    const opts = { method, headers: headers() };
+    if (body !== null) opts.body = JSON.stringify(body);
+
+    let response;
+    try {
+      response = await fetch(`${CONFIG.BASE_URL}${path}`, opts);
+    } catch (networkErr) {
+      throw new Error(`[ApiClient] Sin conexión — ${method} ${path}`);
+    }
+
+    if (!response.ok) {
+      let detail = '';
+      try { detail = (await response.json()).message || ''; } catch { /* noop */ }
+      throw new Error(`[ApiClient] HTTP ${response.status}${detail ? ': ' + detail : ''} — ${method} ${path}`);
+    }
+
+    // Respuestas 204 No Content no tienen body
+    if (response.status === 204) return null;
+
     return response.json();
-  },
-};
+  };
+
+  return {
+    get:    (path)       => request('GET',    path),
+    post:   (path, body) => request('POST',   path, body),
+    put:    (path, body) => request('PUT',    path, body),
+    patch:  (path, body) => request('PATCH',  path, body),
+    delete: (path)       => request('DELETE', path),
+
+    /**
+     * Atajo semántico: guarda la configuración del modelo.
+     * Equivale a ApiClient.post('/empresa/carga', data)
+     */
+    saveConfig: (data) => request('POST', '/empresa/carga', data),
+  };
+})();
 
 /* ─────────────────────────────────────────────
    DOM HELPERS — sin innerHTML con datos del usuario
 ───────────────────────────────────────────── */
-
-/** Crea un elemento de forma segura, sin innerHTML. */
 function createElement(tag, props = {}, children = []) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
-    if (k === 'className')       el.className = v;
-    else if (k === 'textContent') el.textContent = v;
-    else if (k === 'title')      el.title = v;
-    else if (k === 'href')       el.href = v;
-    else if (k === 'target')     el.target = v;
-    else if (k === 'rel')        el.rel = v;
-    else if (k === 'ariaLabel')  el.setAttribute('aria-label', v);
-    else                          el.setAttribute(k, v);
+    if      (k === 'className')    el.className = v;
+    else if (k === 'textContent')  el.textContent = v;
+    else if (k === 'title')        el.title = v;
+    else if (k === 'href')         el.href = v;
+    else if (k === 'target')       el.target = v;
+    else if (k === 'rel')          el.rel = v;
+    else if (k === 'ariaLabel')    el.setAttribute('aria-label', v);
+    else                           el.setAttribute(k, v);
   }
   for (const child of children) el.appendChild(child);
   return el;
@@ -271,9 +357,8 @@ function selectRole(card) {
 
 /* ─────────────────────────────────────────────
    TAGS
-   Uso de WeakMap para asociar tags a botones sin exponer datos en atributos.
 ───────────────────────────────────────────── */
-const tagButtonMap = new Map(); // tag string → button element
+const tagButtonMap = new Map(); // tag string → DOM element
 
 function focusTagInput() {
   document.getElementById('tagInput').focus();
@@ -299,13 +384,11 @@ function handleTagKey(e) {
 function renderTag(tag) {
   const container = document.getElementById('tagContainer');
 
-  // Botón de eliminar — sin atributos que contengan el valor del tag
   const removeBtn = createElement('button', { ariaLabel: `Eliminar tag ${tag}` });
   removeBtn.textContent = '×';
   removeBtn.addEventListener('click', () => removeTag(removeBtn, tag));
 
   const el = createElement('span', { className: 'tag' }, [removeBtn]);
-  // Insertar el texto ANTES del botón usando un TextNode
   el.insertBefore(document.createTextNode(tag), removeBtn);
 
   container.insertBefore(el, document.getElementById('tagInput'));
@@ -330,12 +413,23 @@ function handleDocs(event) {
     const check = Security.validateFile(file, CONFIG.ALLOWED_DOC_TYPES);
     if (!check.ok) { alert(check.msg); return; }
 
-    // Sanitizar nombre antes de almacenar (nunca va a HTML directamente)
     const safeName = Security.sanitizeForJson(file.name, 255);
     if (!safeName || state.docs.find(d => d.name === safeName)) return;
 
     state.docs.push({ name: safeName, size: file.size });
     renderDocItem(safeName);
+
+    /* ── Ejemplo de subida real con UploadClient ──
+    const fd = new FormData();
+    fd.append('doc', file);
+    UploadClient.post('/empresa/docs', fd, (pct) => {
+      console.log(`Subiendo ${safeName}… ${pct}%`);
+    }).then(res => {
+      console.log('Doc subido:', res);
+    }).catch(err => {
+      console.error('Error subiendo doc:', err.message);
+    });
+    ── fin ejemplo ── */
   });
 }
 
@@ -376,10 +470,23 @@ function handleInvFile(event, type) {
 
   const safeName = Security.sanitizeForJson(file.name, 255);
   const nameEl   = document.getElementById(type === 'own' ? 'ownInvName' : 'extInvName');
-  nameEl.textContent = safeName;   // textContent, nunca innerHTML
+  nameEl.textContent   = safeName;   // textContent, nunca innerHTML
   nameEl.style.display = 'block';
 
   if (type === 'own') state.inventory.own = { name: safeName, size: file.size };
+
+  /* ── Ejemplo de subida real con UploadClient ──
+  const fd = new FormData();
+  fd.append('inventory', file);
+  const endpoint = type === 'own' ? '/empresa/inventario/propio' : '/empresa/inventario/externo';
+  UploadClient.post(endpoint, fd, (pct) => {
+    console.log(`Subiendo inventario… ${pct}%`);
+  }).then(res => {
+    console.log('Inventario subido:', res);
+  }).catch(err => {
+    console.error('Error subiendo inventario:', err.message);
+  });
+  ── fin ejemplo ── */
 }
 
 function connectInv(type) {
@@ -403,7 +510,6 @@ function activateOrb() {
 ───────────────────────────────────────────── */
 function onSocialInput(input) {
   const network = input.dataset.network;
-  // Truncar primero para que el campo no acumule basura
   const value   = Security.sanitizeForJson(input.value, CONFIG.MAX_LENGTHS.socialUrl);
   input.value   = value;
 
@@ -411,7 +517,6 @@ function onSocialInput(input) {
 
   const row    = input.closest('.social-row');
   const toggle = document.getElementById(`tog-${network}`);
-
   const isValid = Security.validateSocialUrl(network, value);
 
   if (value && !isValid) {
@@ -452,7 +557,6 @@ function onSocialToggle(toggle) {
   renderSocialPreview();
 }
 
-/** Renderiza las píldoras de redes activas — sin innerHTML con datos del usuario. */
 function renderSocialPreview() {
   const container = document.getElementById('socialPreview');
   const LABELS = {
@@ -466,7 +570,6 @@ function renderSocialPreview() {
   const active = Object.entries(state.socials)
     .filter(([, data]) => data.enabled && data.url);
 
-  // Limpiar el contenedor de forma segura
   while (container.firstChild) container.removeChild(container.firstChild);
 
   if (!active.length) {
@@ -477,11 +580,7 @@ function renderSocialPreview() {
   }
 
   for (const [net, data] of active) {
-    // La URL ya fue validada con la regex estricta de cada red;
-    // aun así la pasamos por sanitizeForJson antes de ponerla en href.
     const safeUrl = Security.sanitizeForJson(data.url, CONFIG.MAX_LENGTHS.socialUrl);
-
-    // Defensa extra: sólo permitir URLs que comiencen con https://
     const pill = createElement('a', {
       className: 'social-pill',
       href:      safeUrl.startsWith('https://') ? safeUrl : '#',
@@ -495,11 +594,12 @@ function renderSocialPreview() {
 
 /* ─────────────────────────────────────────────
    GUARDAR CONFIGURACIÓN
+   Usa ApiClient.saveConfig() → POST /empresa/carga
 ───────────────────────────────────────────── */
 async function saveConfig() {
   const btn = document.querySelector('.save-btn');
 
-  // Validar redes habilitadas
+  // Validar redes habilitadas antes de enviar
   for (const [net, data] of Object.entries(state.socials)) {
     if (data.enabled && !Security.validateSocialUrl(net, data.url)) {
       alert(`La URL de ${net} no es válida. Corregila antes de guardar.`);
@@ -508,11 +608,11 @@ async function saveConfig() {
   }
 
   // Volcar DOM → estado con sanitización
-  state.name     = Security.sanitizeForJson(
+  state.name = Security.sanitizeForJson(
     document.getElementById('modelName').value.trim() || 'Modelo sin nombre',
     CONFIG.MAX_LENGTHS.modelName
   );
-  state.lang     = Security.sanitizeForJson(
+  state.lang = Security.sanitizeForJson(
     document.getElementById('modelLang').value,
     50
   );
@@ -520,7 +620,7 @@ async function saveConfig() {
     document.getElementById('restrictions').value,
     CONFIG.MAX_LENGTHS.restrictions
   );
-  state.companyInfo  = {
+  state.companyInfo = {
     biz:     document.getElementById('companyBiz').value,
     does:    document.getElementById('companyDoes').value,
     vision:  document.getElementById('companyVision').value,
@@ -541,7 +641,10 @@ async function saveConfig() {
     console.error('[ANA] saveConfig error:', err);
     btn.textContent = 'Error al guardar';
   } finally {
-    setTimeout(() => { btn.textContent = 'Guardar modelo'; btn.disabled = false; }, 3000);
+    setTimeout(() => {
+      btn.textContent = 'Guardar modelo';
+      btn.disabled    = false;
+    }, 3000);
   }
 }
 
@@ -577,10 +680,10 @@ document.addEventListener('DOMContentLoaded', () => {
     );
   });
 
-  ['ownInvDrop','extInvDrop'].forEach(id => {
+  ['ownInvDrop', 'extInvDrop'].forEach(id => {
     const el = document.getElementById(id);
     el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('dragleave', ()  => el.classList.remove('drag-over'));
     el.addEventListener('drop',      e => { e.preventDefault(); el.classList.remove('drag-over'); });
   });
 
