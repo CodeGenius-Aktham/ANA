@@ -11,8 +11,12 @@
 const CONFIG = {
   /**
    * Base de la API. Todos los clientes lo usan.
-   * El endpoint de carga es: BASE_URL + /empresa/carga
-   * Los demás endpoints se construyen desde BASE_URL directamente.
+   *
+   * Endpoints de empresa:
+   *   GET    BASE_URL + /empresa/search/<nombre_empresa>
+   *   POST   BASE_URL + /empresa/carga
+   *   PUT    BASE_URL + /empresa/update/<nombre_empresa>
+   *   DELETE BASE_URL + /empresa/delete/<nombre_empresa>
    */
   BASE_URL: 'https://17fc-186-28-189-44.ngrok-free.app',
 
@@ -83,6 +87,10 @@ const Security = {
   cleanForJson(str) {
     if (typeof str !== 'string') return '';
     return str
+      // Normaliza a forma NFC: evita que letras con tilde/diéresis (ñ, á, ü…)
+      // queden como combinaciones de caracteres (n + ˜) que rompan validaciones
+      // o se vean mal en el backend.
+      .normalize('NFC')
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
       .replace(/\u2028|\u2029/g, '')
       .replace(/\0/g, '');
@@ -212,20 +220,27 @@ const UploadClient = (() => {
 
 /* ─────────────────────────────────────────────
    API CLIENT
-   Para endpoints JSON (GET / POST / PUT / PATCH / DELETE).
+   Para endpoints JSON (GET / POST / PUT / DELETE).
    No manejes archivos desde acá; usá UploadClient para eso.
 
+   Endpoints de empresa:
+     GET    /empresa/search/<nombre_empresa>
+     POST   /empresa/carga
+     PUT    /empresa/update/<nombre_empresa>
+     DELETE /empresa/delete/<nombre_empresa>
+
    Uso:
-     ApiClient.post('/empresa/carga', payload)
-     ApiClient.get('/modelos/42')
-     ApiClient.put('/modelos/42', payload)
-     ApiClient.patch('/modelos/42', { isActive: true })
-     ApiClient.delete('/modelos/42')
+     ApiClient.searchEmpresa('Bomba Dulce')
+     ApiClient.saveConfig(payload)
+     ApiClient.updateEmpresa('Bomba Dulce', payload)
+     ApiClient.deleteEmpresa('Bomba Dulce')
 ───────────────────────────────────────────── */
 const ApiClient = (() => {
 
   const headers = () => ({
-    'Content-Type': 'application/json',
+    // charset=utf-8 explícito: asegura que ñ, tildes y demás caracteres
+    // especiales viajen bien y el backend los decodifique correctamente.
+    'Content-Type': 'application/json; charset=utf-8',
     'ngrok-skip-browser-warning': 'true',
     // 'Authorization': `Bearer ${getToken()}`,
   });
@@ -261,10 +276,31 @@ const ApiClient = (() => {
     delete: (path)       => request('DELETE', path),
 
     /**
-     * Atajo semántico: guarda la configuración del modelo.
+     * Atajo semántico: guarda la configuración del modelo (crea la empresa).
      * Equivale a ApiClient.post('/empresa/carga', data)
      */
     saveConfig: (data) => request('POST', '/empresa/carga', data),
+
+    /**
+     * Busca una empresa por nombre.
+     * Equivale a ApiClient.get(`/empresa/search/${nombreEmpresa}`)
+     */
+    searchEmpresa: (nombreEmpresa) =>
+      request('GET', `/empresa/search/${encodeURIComponent(nombreEmpresa)}`),
+
+    /**
+     * Actualiza la configuración de una empresa existente.
+     * Equivale a ApiClient.put(`/empresa/update/${nombreEmpresa}`, data)
+     */
+    updateEmpresa: (nombreEmpresa, data) =>
+      request('PUT', `/empresa/update/${encodeURIComponent(nombreEmpresa)}`, data),
+
+    /**
+     * Elimina una empresa por nombre.
+     * Equivale a ApiClient.delete(`/empresa/delete/${nombreEmpresa}`)
+     */
+    deleteEmpresa: (nombreEmpresa) =>
+      request('DELETE', `/empresa/delete/${encodeURIComponent(nombreEmpresa)}`),
   };
 })();
 
@@ -594,7 +630,8 @@ function renderSocialPreview() {
 
 /* ─────────────────────────────────────────────
    GUARDAR CONFIGURACIÓN
-   Usa ApiClient.saveConfig() → POST /empresa/carga
+   Crea la empresa vía ApiClient.saveConfig() → POST /empresa/carga
+   Si ya existe, usá ApiClient.updateEmpresa(nombre, payload) → PUT /empresa/update/<nombre_empresa>
 ───────────────────────────────────────────── */
 async function saveConfig() {
   const btn = document.querySelector('.save-btn');
