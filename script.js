@@ -18,7 +18,7 @@ const CONFIG = {
    *   PUT    BASE_URL + /empresa/update/<nombre_empresa>
    *   DELETE BASE_URL + /empresa/delete/<nombre_empresa>
    */
-  BASE_URL: 'https://17fc-186-28-189-44.ngrok-free.app',
+  BASE_URL: 'https://1067-186-28-189-44.ngrok-free.app',
 
   MAX_LENGTHS: {
     modelName:      80,
