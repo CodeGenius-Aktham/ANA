@@ -1,7 +1,7 @@
 /**
  * ══════════════════════════════════════════════
  *  ANA — Configurador de Modelo IA
- *  script.js  (hardened v3 · dual-client)
+ *  script.js  (hardened v4 · dual-client · inventario conectable)
  * ══════════════════════════════════════════════
  */
 
@@ -17,6 +17,13 @@ const CONFIG = {
    *   POST   BASE_URL + /empresa/carga
    *   PUT    BASE_URL + /empresa/update/<nombre_empresa>
    *   DELETE BASE_URL + /empresa/delete/<nombre_empresa>
+   *
+   * Endpoints de inventario:
+   *   POST   BASE_URL + /empresa/inventario/propio      (multipart, campo "inventory")
+   *   POST   BASE_URL + /empresa/inventario/externo/test (JSON { url, key }) — valida credenciales
+   *   POST   BASE_URL + /empresa/inventario/externo      (JSON { url, key }) — guarda la conexión
+   *   DELETE BASE_URL + /empresa/inventario/propio
+   *   DELETE BASE_URL + /empresa/inventario/externo
    */
   BASE_URL: 'https://1067-186-28-189-44.ngrok-free.app',
 
@@ -31,6 +38,8 @@ const CONFIG = {
     restrictions:   800,
     tag:            40,
     socialUrl:      300,
+    invUrl:         300,
+    invKey:         200,
   },
 
   SOCIAL_PATTERNS: {
@@ -44,6 +53,9 @@ const CONFIG = {
   ALLOWED_DOC_TYPES: ['.pdf', '.doc', '.docx', '.txt', '.csv'],
   ALLOWED_INV_TYPES: ['.csv', '.xlsx', '.json'],
   MAX_FILE_SIZE_MB:  10,
+
+  /** URL debe ser http(s) válida — usado por la conexión de inventario externo */
+  URL_PATTERN: /^https?:\/\/[^\s/$.?#].[^\s]*$/i,
 };
 
 /* ─────────────────────────────────────────────
@@ -61,7 +73,28 @@ const state = {
   role:         'Vendedor',
   companyInfo:  {},
   docs:         [],
-  inventory:    { own: null, external: { url: '', key: '' } },
+
+  /**
+   * Inventario:
+   *  own      → archivo propio subido directo al backend
+   *  external → fuente externa (ej. Shopify, Google Sheets API, ERP) vía URL + API key
+   */
+  inventory: {
+    own: {
+      connected: false,
+      name:      '',
+      size:      0,
+      uploading: false,
+      progress:  0,
+    },
+    external: {
+      connected: false,
+      url:       '',
+      key:       '',
+      testing:   false,
+    },
+  },
+
   socials: {
     instagram: { enabled: false, url: '' },
     facebook:  { enabled: false, url: '' },
@@ -124,6 +157,12 @@ const Security = {
     return pattern ? pattern.test(value.trim()) : false;
   },
 
+  /** Valida una URL genérica http(s) — usada por inventario externo. */
+  validateUrl(value) {
+    if (!value) return false;
+    return CONFIG.URL_PATTERN.test(value.trim());
+  },
+
   /** Valida que un color sea un hex válido de 6 dígitos. */
   validateColor(color) {
     return /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#3DBA65';
@@ -136,6 +175,20 @@ const Security = {
       if (data.enabled && data.url) {
         activeSocials[net] = Security.sanitizeForJson(data.url, CONFIG.MAX_LENGTHS.socialUrl);
       }
+    }
+
+    const inventory = {};
+    if (state.inventory.own.connected) {
+      inventory.own = {
+        name: Security.sanitizeForJson(state.inventory.own.name, 255),
+        size: state.inventory.own.size,
+      };
+    }
+    if (state.inventory.external.connected) {
+      inventory.external = {
+        url: Security.sanitizeForJson(state.inventory.external.url, CONFIG.MAX_LENGTHS.invUrl),
+        key: Security.sanitizeForJson(state.inventory.external.key, CONFIG.MAX_LENGTHS.invKey),
+      };
     }
 
     return {
@@ -155,8 +208,9 @@ const Security = {
         mission: Security.sanitizeForJson(state.companyInfo.mission || '', CONFIG.MAX_LENGTHS.companyMission),
         values:  Security.sanitizeForJson(state.companyInfo.values  || '', CONFIG.MAX_LENGTHS.companyValues),
       },
-      socials:  activeSocials,
-      isActive: state.isActive,
+      socials:   activeSocials,
+      inventory,
+      isActive:  state.isActive,
     };
   },
 };
@@ -301,6 +355,25 @@ const ApiClient = (() => {
      */
     deleteEmpresa: (nombreEmpresa) =>
       request('DELETE', `/empresa/delete/${encodeURIComponent(nombreEmpresa)}`),
+
+    /**
+     * Prueba credenciales de una fuente de inventario externa ANTES de guardarla.
+     * El backend debería responder 200 si logra autenticar/leer la fuente.
+     */
+    testExternalInventory: (url, key) =>
+      request('POST', '/empresa/inventario/externo/test', { url, key }),
+
+    /** Guarda la conexión de inventario externo ya validada. */
+    connectExternalInventory: (url, key) =>
+      request('POST', '/empresa/inventario/externo', { url, key }),
+
+    /** Elimina la conexión de inventario externo. */
+    disconnectExternalInventory: () =>
+      request('DELETE', '/empresa/inventario/externo'),
+
+    /** Elimina el inventario propio subido. */
+    disconnectOwnInventory: () =>
+      request('DELETE', '/empresa/inventario/propio'),
   };
 })();
 
@@ -496,41 +569,265 @@ function removeDoc(btn, name) {
 
 /* ─────────────────────────────────────────────
    INVENTARIO
+   Dos modos, cada uno con conexión real y feedback visual:
+
+     1) PROPIO — el usuario suelta/selecciona un .csv/.xlsx/.json
+        y se sube directo al backend con barra de progreso.
+
+     2) EXTERNO — el usuario ingresa URL + API key de su fuente
+        (Shopify, Sheets, ERP, etc). Antes de guardar, se prueba
+        la conexión contra el backend; solo si responde OK se
+        marca como conectada.
+
+   IDs de DOM esperados (agregalos a tu HTML si no existen):
+     Propio:
+       #ownInvDrop   → zona de drop / click
+       #ownInvInput  → <input type="file"> oculto
+       #ownInvName   → texto con el nombre del archivo / estado
+       #ownInvBar    → <div> barra de progreso (opcional)
+       #ownConnectBtn→ botón conectar/desconectar
+
+     Externo:
+       #extInvDrop     → contenedor del formulario externo
+       #extInvUrlInput → <input> para la URL
+       #extInvKeyInput → <input> para la API key
+       #extInvName     → texto de estado ("✓ Conectado a…")
+       #extConnectBtn  → botón conectar/desconectar
 ───────────────────────────────────────────── */
-function handleInvFile(event, type) {
-  const file = event.target.files[0];
-  if (!file) return;
 
-  const check = Security.validateFile(file, CONFIG.ALLOWED_INV_TYPES);
-  if (!check.ok) { alert(check.msg); event.target.value = ''; return; }
-
-  const safeName = Security.sanitizeForJson(file.name, 255);
-  const nameEl   = document.getElementById(type === 'own' ? 'ownInvName' : 'extInvName');
-  nameEl.textContent   = safeName;   // textContent, nunca innerHTML
-  nameEl.style.display = 'block';
-
-  if (type === 'own') state.inventory.own = { name: safeName, size: file.size };
-
-  /* ── Ejemplo de subida real con UploadClient ──
-  const fd = new FormData();
-  fd.append('inventory', file);
-  const endpoint = type === 'own' ? '/empresa/inventario/propio' : '/empresa/inventario/externo';
-  UploadClient.post(endpoint, fd, (pct) => {
-    console.log(`Subiendo inventario… ${pct}%`);
-  }).then(res => {
-    console.log('Inventario subido:', res);
-  }).catch(err => {
-    console.error('Error subiendo inventario:', err.message);
-  });
-  ── fin ejemplo ── */
+/** Aplica un estado visual simple a un botón de conexión. */
+function setInvButtonState(btn, connected, labels) {
+  btn.classList.toggle('connected', connected);
+  btn.disabled    = false;
+  btn.textContent = connected ? labels.connected : labels.disconnected;
 }
 
+/** Muestra/oculta y actualiza la barra de progreso de subida (si existe en el HTML). */
+function setInvProgress(pct) {
+  const bar = document.getElementById('ownInvBar');
+  if (!bar) return;
+  bar.style.display = pct > 0 && pct < 100 ? 'block' : 'none';
+  bar.style.width   = `${pct}%`;
+}
+
+/* ---------- INVENTARIO PROPIO (archivo) ---------- */
+
+/** Dispara el selector de archivo — llamalo desde el click en la drop-zone. */
+function triggerOwnInvSelect() {
+  const input = document.getElementById('ownInvInput');
+  if (input) input.click();
+}
+
+/** Handler del <input type="file"> o de un drop de archivo. Sube directo al backend. */
+function handleInvFile(event, type) {
+  const file = event.target?.files?.[0] ?? event; // acepta Event o File directo (drag&drop)
+  if (!file) return;
+
+  if (type !== 'own') return; // el tipo externo usa connectExternalInventory(), no archivo
+
+  const check = Security.validateFile(file, CONFIG.ALLOWED_INV_TYPES);
+  if (!check.ok) { alert(check.msg); if (event.target) event.target.value = ''; return; }
+
+  const safeName = Security.sanitizeForJson(file.name, 255);
+  uploadOwnInventory(file, safeName);
+}
+
+/** Sube el archivo de inventario propio con progreso real. */
+async function uploadOwnInventory(file, safeName) {
+  const nameEl = document.getElementById('ownInvName');
+  const btn    = document.getElementById('ownConnectBtn');
+
+  state.inventory.own.uploading = true;
+  state.inventory.own.progress  = 0;
+  if (nameEl) { nameEl.textContent = `Subiendo ${safeName}…`; nameEl.style.display = 'block'; }
+  if (btn)    { btn.disabled = true; btn.textContent = 'Subiendo…'; }
+  setInvProgress(1);
+
+  try {
+    const fd = new FormData();
+    fd.append('inventory', file);
+
+    const res = await UploadClient.post('/empresa/inventario/propio', fd, (pct) => {
+      state.inventory.own.progress = pct;
+      setInvProgress(pct);
+    });
+
+    state.inventory.own = {
+      connected: true,
+      name:      safeName,
+      size:      file.size,
+      uploading: false,
+      progress:  100,
+    };
+
+    if (nameEl) nameEl.textContent = `✓ ${safeName}`;
+    if (btn) setInvButtonState(btn, true, {
+      connected:    '✓ Inventario conectado — quitar',
+      disconnected: 'Conectar inventario',
+    });
+    setInvProgress(0);
+    return res;
+  } catch (err) {
+    console.error('[ANA] Error subiendo inventario propio:', err.message);
+    state.inventory.own.uploading = false;
+    if (nameEl) nameEl.textContent = 'Error al subir el archivo. Probá de nuevo.';
+    if (btn) setInvButtonState(btn, false, {
+      connected:    '✓ Inventario conectado — quitar',
+      disconnected: 'Conectar inventario',
+    });
+    setInvProgress(0);
+  }
+}
+
+/** Quita la conexión de inventario propio (backend + estado + UI). */
+async function disconnectOwnInventory() {
+  const nameEl = document.getElementById('ownInvName');
+  const btn    = document.getElementById('ownConnectBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Quitando…'; }
+
+  try {
+    if (state.inventory.own.connected) {
+      await ApiClient.disconnectOwnInventory();
+    }
+  } catch (err) {
+    console.error('[ANA] Error desconectando inventario propio:', err.message);
+    // seguimos limpiando el estado local igual, para no dejar la UI trabada
+  }
+
+  state.inventory.own = { connected: false, name: '', size: 0, uploading: false, progress: 0 };
+  if (nameEl) { nameEl.textContent = ''; nameEl.style.display = 'none'; }
+  if (btn) setInvButtonState(btn, false, {
+    connected:    '✓ Inventario conectado — quitar',
+    disconnected: 'Conectar inventario',
+  });
+}
+
+/* ---------- INVENTARIO EXTERNO (URL + API key) ---------- */
+
+/**
+ * Conecta una fuente externa de inventario. Prueba credenciales antes
+ * de guardar — así el usuario sabe en un click si algo está mal, sin
+ * tener que esperar al guardado general del modelo.
+ */
+async function connectExternalInventory() {
+  const urlInput = document.getElementById('extInvUrlInput');
+  const keyInput = document.getElementById('extInvKeyInput');
+  const nameEl   = document.getElementById('extInvName');
+  const btn      = document.getElementById('extConnectBtn');
+
+  // Si ya está conectado, el botón actúa como "desconectar"
+  if (state.inventory.external.connected) {
+    return disconnectExternalInventory();
+  }
+
+  const url = Security.sanitizeForJson((urlInput?.value || '').trim(), CONFIG.MAX_LENGTHS.invUrl);
+  const key = Security.sanitizeForJson((keyInput?.value || '').trim(), CONFIG.MAX_LENGTHS.invKey);
+
+  if (!url || !Security.validateUrl(url)) {
+    alert('Ingresá una URL válida (debe empezar con http:// o https://).');
+    urlInput?.focus();
+    return;
+  }
+  if (!key) {
+    alert('Ingresá la API key de la fuente externa.');
+    keyInput?.focus();
+    return;
+  }
+
+  state.inventory.external.testing = true;
+  if (btn)    { btn.disabled = true; btn.textContent = 'Probando conexión…'; }
+  if (nameEl) { nameEl.textContent = 'Verificando credenciales…'; nameEl.style.display = 'block'; }
+
+  try {
+    // 1) Probar antes de guardar — evita conexiones "fantasma"
+    await ApiClient.testExternalInventory(url, key);
+
+    // 2) Si la prueba pasa, guardar la conexión
+    await ApiClient.connectExternalInventory(url, key);
+
+    state.inventory.external = { connected: true, url, key, testing: false };
+
+    if (nameEl) nameEl.textContent = `✓ Conectado a ${new URL(url).hostname}`;
+    if (btn) setInvButtonState(btn, true, {
+      connected:    '✓ Fuente conectada — quitar',
+      disconnected: 'Conectar fuente externa',
+    });
+    if (keyInput) keyInput.value = ''; // no dejamos la key visible en el input
+  } catch (err) {
+    console.error('[ANA] Error conectando inventario externo:', err.message);
+    state.inventory.external.testing = false;
+    if (nameEl) nameEl.textContent = 'No se pudo conectar. Revisá la URL y la API key.';
+    if (btn) setInvButtonState(btn, false, {
+      connected:    '✓ Fuente conectada — quitar',
+      disconnected: 'Conectar fuente externa',
+    });
+  }
+}
+
+/** Quita la conexión de inventario externo (backend + estado + UI). */
+async function disconnectExternalInventory() {
+  const nameEl   = document.getElementById('extInvName');
+  const btn      = document.getElementById('extConnectBtn');
+  const urlInput = document.getElementById('extInvUrlInput');
+  const keyInput = document.getElementById('extInvKeyInput');
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Quitando…'; }
+
+  try {
+    if (state.inventory.external.connected) {
+      await ApiClient.disconnectExternalInventory();
+    }
+  } catch (err) {
+    console.error('[ANA] Error desconectando inventario externo:', err.message);
+  }
+
+  state.inventory.external = { connected: false, url: '', key: '', testing: false };
+  if (nameEl)   { nameEl.textContent = ''; nameEl.style.display = 'none'; }
+  if (urlInput) urlInput.value = '';
+  if (keyInput) keyInput.value = '';
+  if (btn) setInvButtonState(btn, false, {
+    connected:    '✓ Fuente conectada — quitar',
+    disconnected: 'Conectar fuente externa',
+  });
+}
+
+/**
+ * Punto de entrada único para el botón de conexión — decide propio vs
+ * externo y si toca conectar o desconectar, según el estado actual.
+ */
 function connectInv(type) {
-  const btn = document.getElementById(type === 'own' ? 'ownConnectBtn' : 'extConnectBtn');
-  btn.classList.toggle('connected');
-  btn.textContent = btn.classList.contains('connected')
-    ? (type === 'own' ? '✓ Inventario conectado' : '✓ Fuente conectada')
-    : (type === 'own' ? 'Conectar inventario'    : 'Conectar fuente externa');
+  if (type === 'own') {
+    return state.inventory.own.connected
+      ? disconnectOwnInventory()
+      : triggerOwnInvSelect(); // el submit real ocurre en handleInvFile al elegir el archivo
+  }
+  if (type === 'external') {
+    return connectExternalInventory();
+  }
+}
+
+/** Habilita drag & drop real (no solo visual) sobre la zona de inventario propio. */
+function setupInventoryDragDrop() {
+  const dropZones = [
+    { id: 'ownInvDrop', type: 'own' },
+    { id: 'extInvDrop', type: 'external' },
+  ];
+
+  dropZones.forEach(({ id, type }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      if (type !== 'own') return; // la fuente externa no acepta archivos soltados
+
+      const file = e.dataTransfer?.files?.[0];
+      if (file) handleInvFile(file, 'own');
+    });
+  });
 }
 
 /* ─────────────────────────────────────────────
@@ -717,12 +1014,27 @@ document.addEventListener('DOMContentLoaded', () => {
     );
   });
 
-  ['ownInvDrop', 'extInvDrop'].forEach(id => {
+  // Input de archivo oculto para inventario propio (click en la drop-zone lo dispara)
+  const ownInvInput = document.getElementById('ownInvInput');
+  if (ownInvInput) {
+    ownInvInput.addEventListener('change', e => handleInvFile(e, 'own'));
+  }
+  const ownInvDrop = document.getElementById('ownInvDrop');
+  if (ownInvDrop) {
+    ownInvDrop.addEventListener('click', () => {
+      if (!state.inventory.own.connected) triggerOwnInvSelect();
+    });
+  }
+
+  // Permite conectar la fuente externa con Enter desde cualquiera de los dos campos
+  ['extInvUrlInput', 'extInvKeyInput'].forEach(id => {
     const el = document.getElementById(id);
-    el.addEventListener('dragover',  e => { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragleave', ()  => el.classList.remove('drag-over'));
-    el.addEventListener('drop',      e => { e.preventDefault(); el.classList.remove('drag-over'); });
+    if (!el) return;
+    el.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); connectExternalInventory(); }
+    });
   });
 
+  setupInventoryDragDrop();
   renderOrb();
 });
