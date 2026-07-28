@@ -168,7 +168,48 @@ const Security = {
     return /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '#3DBA65';
   },
 
-  /** Construye el payload seguro para el backend. */
+  /**
+   * Construye el payload seguro para el backend.
+   *
+   * Ejemplo de salida real (con inventario propio y externo conectados):
+   * {
+   *   "name": "Ana",
+   *   "company": "Bomba Dulce",
+   *   "color": "#3DBA65",
+   *   "tone": ["Profesional", "Cercano"],
+   *   "voice": ["Femenina"],
+   *   "lang": "Español",
+   *   "tags": ["ventas", "atencion-cliente"],
+   *   "restrictions": "No ofrecer descuentos sin autorización.",
+   *   "role": "Vendedor",
+   *   "companyInfo": {
+   *     "biz": "Tienda de golosinas y regalos temáticos",
+   *     "does": "Vende bombas de dulces y arreglos personalizados",
+   *     "vision": "Ser la marca líder en regalos dulces de Venezuela",
+   *     "mission": "Sorprender con cada entrega",
+   *     "values": "Creatividad, calidad, cercanía"
+   *   },
+   *   "socials": {
+   *     "instagram": "https://instagram.com/bombadulce",
+   *     "whatsapp": "+584121234567"
+   *   },
+   *   "inventory": {
+   *     "own": {
+   *       "name": "inventario_octubre.csv",
+   *       "size": 24576
+   *     },
+   *     "external": {
+   *       "url": "https://mitienda.myshopify.com/api",
+   *       "key": "sk_live_xxxxxxxxxxxx"
+   *     }
+   *   },
+   *   "isActive": true
+   * }
+   *
+   * Nota: "inventory.own" e "inventory.external" solo aparecen cuando
+   * state.inventory.own.connected / state.inventory.external.connected
+   * son true. Si ninguno está conectado, "inventory" se envía como {}.
+   */
   buildPayload() {
     const activeSocials = {};
     for (const [net, data] of Object.entries(state.socials)) {
