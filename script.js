@@ -52,7 +52,7 @@ const CONFIG = {
   },
 
   ALLOWED_DOC_TYPES: ['.pdf', '.doc', '.docx', '.txt', '.csv'],
-  ALLOWED_INV_TYPES: ['.csv', '.xlsx', '.xls', '.json', '.doc', '.docx', '.pdf', '.txt', '.ods', '.tsv', '.xml'],
+  ALLOWED_INV_TYPES: ['.csv', '.xlsx', '.xls', '.json', '.doc', '.docx', '.pdf', '.txt', '.ods', '.odt', '.tsv', '.xml'],
   MAX_FILE_SIZE_MB:  10,
 
   /** URL debe ser http(s) válida — usado por la conexión de inventario externo */
