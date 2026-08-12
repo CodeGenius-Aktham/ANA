@@ -20,10 +20,10 @@ const CONFIG = {
    *
    * Endpoints de inventario:
    *   GET    BASE_URL + /inventario/inventory/<nombre_empresa> — trae solo el inventario
-   *   POST   BASE_URL + /inventario/propio      (multipart, campo "inventory")
+   *   POST   BASE_URL + /inventario/load        (multipart, campo "inventory")
    *   POST   BASE_URL + /inventario/externo/test (JSON { url, key }) — valida credenciales
    *   POST   BASE_URL + /inventario/externo      (JSON { url, key }) — guarda la conexión
-   *   DELETE BASE_URL + /inventario/propio
+   *   DELETE BASE_URL + /inventario/load
    *   DELETE BASE_URL + /inventario/externo
    */
   BASE_URL: 'https://7e09-190-24-70-29.ngrok-free.app',
@@ -327,10 +327,10 @@ const UploadClient = (() => {
 
    Endpoints de inventario:
      GET    /inventario/inventory/<nombre_empresa> — solo el inventario, sin el resto del JSON
-     POST   /inventario/propio          (multipart, ver UploadClient)
+     POST   /inventario/load            (multipart, ver UploadClient)
      POST   /inventario/externo/test    (JSON { url, key })
      POST   /inventario/externo         (JSON { url, key })
-     DELETE /inventario/propio
+     DELETE /inventario/load
      DELETE /inventario/externo
 
    Uso:
@@ -430,7 +430,7 @@ const ApiClient = (() => {
 
     /** Elimina el inventario propio subido. */
     disconnectOwnInventory: () =>
-      request('DELETE', '/inventario/propio'),
+      request('DELETE', '/inventario/load'),
   };
 })();
 
@@ -704,7 +704,7 @@ async function uploadOwnInventory(file, safeName) {
     const fd = new FormData();
     fd.append('inventory', file);
 
-    const res = await UploadClient.post('/inventario/propio', fd, (pct) => {
+    const res = await UploadClient.post('/inventario/load', fd, (pct) => {
       state.inventory.own.progress = pct;
       setInvProgress(pct);
     });
