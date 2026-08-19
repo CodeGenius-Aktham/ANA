@@ -26,7 +26,7 @@ const CONFIG = {
    *   DELETE BASE_URL + /inventario/load
    *   DELETE BASE_URL + /inventario/externo
    */
-  BASE_URL: 'https://7e09-190-24-70-29.ngrok-free.app',
+  BASE_URL: 'https://9898-190-24-70-29.ngrok-free.app',
 
   MAX_LENGTHS: {
     modelName:      80,
