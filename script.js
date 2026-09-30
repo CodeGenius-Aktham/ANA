@@ -20,13 +20,11 @@ const CONFIG = {
    *
    * Endpoints de inventario:
    *   GET    BASE_URL + /inventario/inventory/<nombre_empresa> — trae solo el inventario
-   *   POST   BASE_URL + /inventario/load        (multipart, campo "inventory")
+   *   POST   BASE_URL + /inventario/load        (multipart, campo "inventory" + campo "images_inventory" repetido por cada imagen)
    *   POST   BASE_URL + /inventario/externo/test (JSON { url, key }) — valida credenciales
    *   POST   BASE_URL + /inventario/externo      (JSON { url, key }) — guarda la conexión
    *   DELETE BASE_URL + /inventario/load
    *   DELETE BASE_URL + /inventario/externo
-   *   POST   BASE_URL + /inventario/images_inventory (multipart, campo "images_inventory", una imagen por petición)
-   *   DELETE BASE_URL + /inventario/images_inventory/<nombre_imagen>
    */
   BASE_URL: 'https://559a-186-29-72-11.ngrok-free.app',
 
@@ -90,6 +88,8 @@ const state = {
       size:      0,
       uploading: false,
       progress:  0,
+      file:      null,  // archivo elegido; se guarda para reenviarlo junto con las imágenes
+      dirty:     false, // true si cambió el archivo o las imágenes desde el último envío
     },
     external: {
       connected: false,
@@ -100,12 +100,11 @@ const state = {
 
     /**
      * Galería: { id, name, size, type, addedAt,
-     *            url       → object URL local, solo para miniatura/vista previa
-     *            status    → 'uploading' | 'uploaded' | 'error'
-     *            progress  → 0-100 mientras sube
-     *            serverUrl → url devuelta por el backend (si la devuelve)
-     *            file      → File original, se guarda hasta que la subida termina OK (para reintentar) }
-     * Cada imagen se sube sola apenas se agrega (POST /inventario/images_inventory).
+     *            url    → object URL local, solo para miniatura/vista previa
+     *            status → 'pending' | 'uploading' | 'uploaded'
+     *            file   → File original, viaja en el mismo POST que el inventario }
+     * Las imágenes NO se suben solas: se mandan todas juntas con el archivo de
+     * inventario en POST /inventario/load al pulsar "Conectar inventario".
      */
     images_inventory: [],
   },
@@ -218,8 +217,7 @@ const Security = {
    *       "key": "sk_live_xxxxxxxxxxxx"
    *     },
    *     "images_inventory": [
-   *       { "name": "bomba_chocolate.jpg", "size": 184320, "type": "image/jpeg",
-   *         "url": "https://…/bomba_chocolate.jpg" }
+   *       { "name": "bomba_chocolate.jpg", "size": 184320, "type": "image/jpeg" }
    *     ]
    *   },
    *   "isActive": true
@@ -228,9 +226,8 @@ const Security = {
    * Nota: "inventory.own" e "inventory.external" solo aparecen cuando
    * state.inventory.own.connected / state.inventory.external.connected
    * son true. "inventory.images_inventory" solo lista las imágenes que ya
-   * se subieron OK (los archivos viajan antes, uno por uno, a
-   * POST /inventario/images_inventory); "url" aparece si el backend la
-   * devolvió al subir. Si no hay nada, "inventory" se envía como {}.
+   * se enviaron junto con el inventario (los archivos viajan antes, todos
+   * juntos, en POST /inventario/load). Si no hay nada, "inventory" se envía como {}.
    */
   buildPayload() {
     const activeSocials = {};
@@ -253,18 +250,14 @@ const Security = {
         key: Security.sanitizeForJson(state.inventory.external.key, CONFIG.MAX_LENGTHS.invKey),
       };
     }
-    // Solo metadata: los archivos ya se subieron por separado a /inventario/images_inventory
+    // Solo metadata: los archivos ya viajaron junto con el inventario en /inventario/load
     const uploadedImages = state.inventory.images_inventory.filter(img => img.status === 'uploaded');
     if (uploadedImages.length) {
-      inventory.images_inventory = uploadedImages.map(img => {
-        const meta = {
-          name: Security.sanitizeForJson(img.name, 255),
-          size: img.size,
-          type: Security.sanitizeForJson(img.type, 50),
-        };
-        if (img.serverUrl) meta.url = Security.sanitizeForJson(img.serverUrl, CONFIG.MAX_LENGTHS.invUrl);
-        return meta;
-      });
+      inventory.images_inventory = uploadedImages.map(img => ({
+        name: Security.sanitizeForJson(img.name, 255),
+        size: img.size,
+        type: Security.sanitizeForJson(img.type, 50),
+      }));
     }
 
     return {
@@ -361,13 +354,11 @@ const UploadClient = (() => {
 
    Endpoints de inventario:
      GET    /inventario/inventory/<nombre_empresa> — solo el inventario, sin el resto del JSON
-     POST   /inventario/load            (multipart, ver UploadClient)
+     POST   /inventario/load            (multipart: "inventory" + "images_inventory" ×N, ver UploadClient)
      POST   /inventario/externo/test    (JSON { url, key })
      POST   /inventario/externo         (JSON { url, key })
      DELETE /inventario/load
      DELETE /inventario/externo
-     POST   /inventario/images_inventory            (multipart, ver UploadClient)
-     DELETE /inventario/images_inventory/<nombre_imagen>
 
    Uso:
      ApiClient.searchEmpresa('Bomba Dulce')
@@ -467,10 +458,6 @@ const ApiClient = (() => {
     /** Elimina el inventario propio subido. */
     disconnectOwnInventory: () =>
       request('DELETE', '/inventario/load'),
-
-    /** Elimina del backend una imagen ya subida de images_inventory. */
-    deleteInventoryImage: (nombreImagen) =>
-      request('DELETE', `/inventario/images_inventory/${encodeURIComponent(nombreImagen)}`),
   };
 })();
 
@@ -682,56 +669,21 @@ function handleImages(event) {
     const safeName = Security.sanitizeForJson(file.name, 255);
     if (!safeName || state.inventory.images_inventory.find(i => i.name === safeName && i.size === file.size)) return;
 
-    const img = {
-      id:        ++imageIdSeq,
-      name:      safeName,
-      size:      file.size,
-      type:      file.type,
-      addedAt:   Date.now(),
-      url:       URL.createObjectURL(file),
-      status:    'uploading',
-      progress:  0,
-      serverUrl: '',
+    state.inventory.images_inventory.push({
+      id:      ++imageIdSeq,
+      name:    safeName,
+      size:    file.size,
+      type:    file.type,
+      addedAt: Date.now(),
+      url:     URL.createObjectURL(file),
+      status:  'pending',
       file,
-    };
-    state.inventory.images_inventory.push(img);
-    uploadInventoryImage(img);
+    });
+    state.inventory.own.dirty = true;
   });
   if (event.target) event.target.value = '';
   renderImageList();
-}
-
-/** Sube una imagen sola al backend con progreso. Se usa al agregarla y al reintentar. */
-async function uploadInventoryImage(img) {
-  img.status   = 'uploading';
-  img.progress = 0;
-  renderImageList();
-
-  const fd = new FormData();
-  fd.append('images_inventory', img.file, img.name);
-
-  try {
-    const res = await UploadClient.post('/inventario/images_inventory', fd, (pct) => {
-      img.progress = pct;
-      renderImageList();
-    });
-
-    // Si la quitaron de la lista mientras subía, la borramos también del backend
-    if (!state.inventory.images_inventory.includes(img)) {
-      ApiClient.deleteInventoryImage(img.name)
-        .catch(err => console.error('[ANA] Error eliminando imagen:', err.message));
-      return;
-    }
-
-    img.status    = 'uploaded';
-    img.progress  = 100;
-    img.serverUrl = typeof res?.url === 'string' ? res.url : '';
-    img.file      = null; // ya está en el servidor, no hace falta guardar el archivo
-  } catch (err) {
-    console.error(`[ANA] Error subiendo imagen ${img.name}:`, err.message);
-    img.status = 'error';
-  }
-  renderImageList();
+  updateOwnInvButton();
 }
 
 function formatSize(bytes) {
@@ -801,22 +753,16 @@ function renderImageList() {
 }
 
 const IMAGE_STATUS_TEXT = {
-  uploading: img => `Subiendo… ${img.progress}%`,
-  uploaded:  ()  => '✓ Subida',
-  error:     ()  => 'Error al subir',
+  pending:   'Pendiente · se envía con el inventario',
+  uploading: 'Enviando con el inventario…',
+  uploaded:  '✓ Enviada con el inventario',
 };
 
 function renderImageStatus(img) {
-  const status = createElement('span', {
+  return createElement('span', {
     className:   `img-status ${img.status}`,
-    textContent: IMAGE_STATUS_TEXT[img.status](img),
+    textContent: IMAGE_STATUS_TEXT[img.status],
   });
-  if (img.status === 'error') {
-    const retryBtn = createElement('button', { className: 'img-retry', textContent: 'Reintentar' });
-    retryBtn.addEventListener('click', e => { e.stopPropagation(); uploadInventoryImage(img); });
-    status.appendChild(retryBtn);
-  }
-  return status;
 }
 
 function selectImage(id) {
@@ -837,18 +783,15 @@ function renderImagePreview() {
 }
 
 function removeImage(id) {
+  if (state.inventory.own.uploading) { alert('Esperá a que termine el envío del inventario.'); return; }
   const img = state.inventory.images_inventory.find(i => i.id === id);
-  if (img) {
-    URL.revokeObjectURL(img.url);
-    // Si sigue subiendo, uploadInventoryImage() la borra del backend al terminar
-    if (img.status === 'uploaded') {
-      ApiClient.deleteInventoryImage(img.name)
-        .catch(err => console.error('[ANA] Error eliminando imagen:', err.message));
-    }
-  }
+  if (img) URL.revokeObjectURL(img.url);
   state.inventory.images_inventory = state.inventory.images_inventory.filter(i => i.id !== id);
+  // Si ya se había enviado, hay que reenviar el inventario para que el backend la quite
+  if (img?.status === 'uploaded') state.inventory.own.dirty = true;
   if (selectedImageId === id) { selectedImageId = null; renderImagePreview(); }
   renderImageList();
+  updateOwnInvButton();
 }
 
 function setupImageDragDrop() {
@@ -924,54 +867,98 @@ function handleInvFile(event, type) {
   const check = Security.validateFile(file, CONFIG.ALLOWED_INV_TYPES);
   if (!check.ok) { alert(check.msg); if (event.target) event.target.value = ''; return; }
 
-  const safeName = Security.sanitizeForJson(file.name, 255);
-  uploadOwnInventory(file, safeName);
+  // No se sube todavía: se manda junto con las imágenes al pulsar "Conectar inventario"
+  state.inventory.own.file  = file;
+  state.inventory.own.dirty = true;
+  if (event.target) event.target.value = '';
+
+  const nameEl = document.getElementById('ownInvName');
+  if (nameEl) {
+    nameEl.textContent   = `📄 ${Security.sanitizeForJson(file.name, 255)} — listo para enviar`;
+    nameEl.style.display = 'block';
+  }
+  updateOwnInvButton();
 }
 
-/** Sube el archivo de inventario propio con progreso real. */
-async function uploadOwnInventory(file, safeName) {
+/** Deja el botón del inventario propio acorde al estado (conectar / reenviar / quitar). */
+function updateOwnInvButton() {
+  const btn = document.getElementById('ownConnectBtn');
+  if (!btn || state.inventory.own.uploading) return;
+
+  const own     = state.inventory.own;
+  const nImages = state.inventory.images_inventory.length;
+  const withImg = nImages ? ` + ${nImages} ${nImages === 1 ? 'imagen' : 'imágenes'}` : '';
+
+  btn.disabled = false;
+  if (own.file && own.dirty) {
+    btn.classList.remove('connected');
+    btn.textContent = own.connected ? `Reenviar inventario${withImg}` : `Conectar inventario${withImg}`;
+  } else {
+    setInvButtonState(btn, own.connected, {
+      connected:    '✓ Inventario conectado — quitar',
+      disconnected: 'Conectar inventario',
+    });
+  }
+}
+
+/**
+ * Sube en UNA sola petición el archivo de inventario propio + todas las
+ * imágenes de la galería, con progreso real:
+ *   inventory        → archivo de inventario
+ *   images_inventory → una entrada por imagen (campo repetido)
+ */
+async function uploadOwnInventory() {
+  const own    = state.inventory.own;
+  const file   = own.file;
+  const images = [...state.inventory.images_inventory];
+  const safeName = Security.sanitizeForJson(file.name, 255);
   const nameEl = document.getElementById('ownInvName');
   const btn    = document.getElementById('ownConnectBtn');
 
-  state.inventory.own.uploading = true;
-  state.inventory.own.progress  = 0;
-  if (nameEl) { nameEl.textContent = `Subiendo ${safeName}…`; nameEl.style.display = 'block'; }
+  own.uploading = true;
+  own.progress  = 0;
+  images.forEach(img => { img.status = 'uploading'; });
+  renderImageList();
+
+  const withImg = images.length ? ` + ${images.length} ${images.length === 1 ? 'imagen' : 'imágenes'}` : '';
+  if (nameEl) { nameEl.textContent = `Subiendo ${safeName}${withImg}…`; nameEl.style.display = 'block'; }
   if (btn)    { btn.disabled = true; btn.textContent = 'Subiendo…'; }
   setInvProgress(1);
 
   try {
     const fd = new FormData();
     fd.append('inventory', file);
+    images.forEach(img => fd.append('images_inventory', img.file, img.name));
 
     const res = await UploadClient.post('/inventario/load', fd, (pct) => {
-      state.inventory.own.progress = pct;
+      own.progress = pct;
       setInvProgress(pct);
     });
 
-    state.inventory.own = {
+    Object.assign(own, {
       connected: true,
       name:      safeName,
       size:      file.size,
       uploading: false,
       progress:  100,
-    };
-
-    if (nameEl) nameEl.textContent = `✓ ${safeName}`;
-    if (btn) setInvButtonState(btn, true, {
-      connected:    '✓ Inventario conectado — quitar',
-      disconnected: 'Conectar inventario',
+      // Si agregaron/quitaron imágenes mientras subía, queda pendiente reenviar
+      dirty:     state.inventory.images_inventory.some(img => !images.includes(img)) ||
+                 images.some(img => !state.inventory.images_inventory.includes(img)),
     });
+    images.forEach(img => { img.status = 'uploaded'; });
+
+    if (nameEl) nameEl.textContent = `✓ ${safeName}${withImg}`;
     setInvProgress(0);
     return res;
   } catch (err) {
     console.error('[ANA] Error subiendo inventario propio:', err.message);
-    state.inventory.own.uploading = false;
-    if (nameEl) nameEl.textContent = 'Error al subir el archivo. Probá de nuevo.';
-    if (btn) setInvButtonState(btn, false, {
-      connected:    '✓ Inventario conectado — quitar',
-      disconnected: 'Conectar inventario',
-    });
+    own.uploading = false;
+    images.forEach(img => { img.status = 'pending'; });
+    if (nameEl) nameEl.textContent = 'Error al subir el inventario. Probá de nuevo.';
     setInvProgress(0);
+  } finally {
+    renderImageList();
+    updateOwnInvButton();
   }
 }
 
@@ -990,12 +977,14 @@ async function disconnectOwnInventory() {
     // seguimos limpiando el estado local igual, para no dejar la UI trabada
   }
 
-  state.inventory.own = { connected: false, name: '', size: 0, uploading: false, progress: 0 };
+  state.inventory.own = {
+    connected: false, name: '', size: 0, uploading: false, progress: 0, file: null, dirty: false,
+  };
+  // Las imágenes quedan en la galería, pendientes para el próximo envío
+  state.inventory.images_inventory.forEach(img => { img.status = 'pending'; });
   if (nameEl) { nameEl.textContent = ''; nameEl.style.display = 'none'; }
-  if (btn) setInvButtonState(btn, false, {
-    connected:    '✓ Inventario conectado — quitar',
-    disconnected: 'Conectar inventario',
-  });
+  renderImageList();
+  updateOwnInvButton();
 }
 
 /* ---------- INVENTARIO EXTERNO (URL + API key) ---------- */
@@ -1093,9 +1082,11 @@ async function disconnectExternalInventory() {
  */
 function connectInv(type) {
   if (type === 'own') {
-    return state.inventory.own.connected
-      ? disconnectOwnInventory()
-      : triggerOwnInvSelect(); // el submit real ocurre en handleInvFile al elegir el archivo
+    const own = state.inventory.own;
+    if (own.uploading)          return;
+    if (own.file && own.dirty)  return uploadOwnInventory(); // inventario + imágenes, todo junto
+    if (own.connected)          return disconnectOwnInventory();
+    return triggerOwnInvSelect(); // el envío ocurre al volver a pulsar el botón
   }
   if (type === 'external') {
     return connectExternalInventory();
@@ -1259,8 +1250,13 @@ async function saveConfig() {
     // La sanitización final ocurre en buildPayload()
   };
 
-  if (state.inventory.images_inventory.some(img => img.status === 'uploading')) {
-    alert('Esperá a que terminen de subir las imágenes antes de guardar.');
+  if (state.inventory.own.uploading) {
+    alert('Esperá a que termine de subir el inventario antes de guardar.');
+    return;
+  }
+  const hasPendingImages = state.inventory.images_inventory.some(img => img.status === 'pending');
+  if ((hasPendingImages || state.inventory.own.dirty) &&
+      !confirm('Hay cambios del inventario o imágenes que todavía no se enviaron. ¿Guardar igual?')) {
     return;
   }
 
