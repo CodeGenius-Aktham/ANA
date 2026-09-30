@@ -35,7 +35,6 @@ const CONFIG = {
     companyDoes:    600,
     companyVision:  200,
     companyMission: 200,
-    companyLocation: 200,
     companyValues:  200,
     restrictions:   800,
     tag:            40,
@@ -189,7 +188,6 @@ const Security = {
    *     "does": "Vende bombas de dulces y arreglos personalizados",
    *     "vision": "Ser la marca líder en regalos dulces de Venezuela",
    *     "mission": "Sorprender con cada entrega",
-   *     "location": "Caracas, Venezuela",
    *     "values": "Creatividad, calidad, cercanía"
    *   },
    *   "socials": {
@@ -250,7 +248,6 @@ const Security = {
         does:    Security.sanitizeForJson(state.companyInfo.does    || '', CONFIG.MAX_LENGTHS.companyDoes),
         vision:  Security.sanitizeForJson(state.companyInfo.vision  || '', CONFIG.MAX_LENGTHS.companyVision),
         mission: Security.sanitizeForJson(state.companyInfo.mission || '', CONFIG.MAX_LENGTHS.companyMission),
-        location: Security.sanitizeForJson(state.companyInfo.location || '', CONFIG.MAX_LENGTHS.companyLocation),
         values:  Security.sanitizeForJson(state.companyInfo.values  || '', CONFIG.MAX_LENGTHS.companyValues),
       },
       socials:   activeSocials,
@@ -1019,7 +1016,6 @@ async function saveConfig() {
     does:    document.getElementById('companyDoes').value,
     vision:  document.getElementById('companyVision').value,
     mission: document.getElementById('companyMission').value,
-    location: document.getElementById('companyLocation').value,
     values:  document.getElementById('companyValues').value,
     // La sanitización final ocurre en buildPayload()
   };
