@@ -76,9 +76,6 @@ const state = {
   companyInfo:  {},
   docs:         [],
 
-  /** Galería: { id, name, size, type, addedAt, url (object URL para la miniatura) } */
-  images:       [],
-
   /**
    * Inventario:
    *  own      → archivo propio subido directo al backend
@@ -98,6 +95,9 @@ const state = {
       key:       '',
       testing:   false,
     },
+
+    /** Galería: { id, name, size, type, addedAt, url (object URL para la miniatura) } */
+    images_inventory: [],
   },
 
   socials: {
@@ -206,14 +206,18 @@ const Security = {
    *     "external": {
    *       "url": "https://mitienda.myshopify.com/api",
    *       "key": "sk_live_xxxxxxxxxxxx"
-   *     }
+   *     },
+   *     "images_inventory": [
+   *       { "name": "bomba_chocolate.jpg", "size": 184320, "type": "image/jpeg" }
+   *     ]
    *   },
    *   "isActive": true
    * }
    *
    * Nota: "inventory.own" e "inventory.external" solo aparecen cuando
    * state.inventory.own.connected / state.inventory.external.connected
-   * son true. Si ninguno está conectado, "inventory" se envía como {}.
+   * son true. "inventory.images_inventory" solo aparece si hay imágenes
+   * en la galería. Si no hay nada, "inventory" se envía como {}.
    */
   buildPayload() {
     const activeSocials = {};
@@ -235,6 +239,13 @@ const Security = {
         url: Security.sanitizeForJson(state.inventory.external.url, CONFIG.MAX_LENGTHS.invUrl),
         key: Security.sanitizeForJson(state.inventory.external.key, CONFIG.MAX_LENGTHS.invKey),
       };
+    }
+    if (state.inventory.images_inventory.length) {
+      inventory.images_inventory = state.inventory.images_inventory.map(img => ({
+        name: Security.sanitizeForJson(img.name, 255),
+        size: img.size,
+        type: Security.sanitizeForJson(img.type, 50),
+      }));
     }
 
     return {
@@ -644,9 +655,9 @@ function handleImages(event) {
     if (!file.type.startsWith('image/')) { alert(`${file.name} no es una imagen válida.`); return; }
 
     const safeName = Security.sanitizeForJson(file.name, 255);
-    if (!safeName || state.images.find(i => i.name === safeName && i.size === file.size)) return;
+    if (!safeName || state.inventory.images_inventory.find(i => i.name === safeName && i.size === file.size)) return;
 
-    state.images.push({
+    state.inventory.images_inventory.push({
       id:      ++imageIdSeq,
       name:    safeName,
       size:    file.size,
@@ -657,8 +668,8 @@ function handleImages(event) {
 
     /* ── Ejemplo de subida real con UploadClient ──
     const fd = new FormData();
-    fd.append('image', file);
-    UploadClient.post('/empresa/imagenes', fd, (pct) => {
+    fd.append('images_inventory', file);
+    UploadClient.post('/inventario/images_inventory', fd, (pct) => {
       console.log(`Subiendo ${safeName}… ${pct}%`);
     }).catch(err => console.error('Error subiendo imagen:', err.message));
     ── fin ejemplo ── */
@@ -695,11 +706,11 @@ function renderImageList() {
   const query  = normalizeSearch(document.getElementById('imgSearch').value);
   const sorter = IMAGE_SORTERS[document.getElementById('imgSort').value] || IMAGE_SORTERS.recent;
 
-  const visible = state.images
+  const visible = state.inventory.images_inventory
     .filter(img => normalizeSearch(img.name).includes(query))
     .sort(sorter);
 
-  const total = state.images.length;
+  const total = state.inventory.images_inventory.length;
   count.textContent = query
     ? `${visible.length} de ${total} ${total === 1 ? 'imagen' : 'imágenes'}`
     : `${total} ${total === 1 ? 'imagen' : 'imágenes'}`;
@@ -741,7 +752,7 @@ function selectImage(id) {
 
 function renderImagePreview() {
   const preview = document.getElementById('imgPreview');
-  const img     = state.images.find(i => i.id === selectedImageId);
+  const img     = state.inventory.images_inventory.find(i => i.id === selectedImageId);
   preview.replaceChildren(img
     ? createElement('img', { src: img.url, alt: img.name })
     : createElement('span', {
@@ -751,9 +762,9 @@ function renderImagePreview() {
 }
 
 function removeImage(id) {
-  const img = state.images.find(i => i.id === id);
+  const img = state.inventory.images_inventory.find(i => i.id === id);
   if (img) URL.revokeObjectURL(img.url);
-  state.images = state.images.filter(i => i.id !== id);
+  state.inventory.images_inventory = state.inventory.images_inventory.filter(i => i.id !== id);
   if (selectedImageId === id) { selectedImageId = null; renderImagePreview(); }
   renderImageList();
 }
