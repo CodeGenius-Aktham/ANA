@@ -227,6 +227,47 @@
       </button>
     </div>
 
+    <!-- ════ GALERÍA DE IMÁGENES — full width ════ -->
+    <div class="card" style="animation-delay:.26s; grid-column: 1 / -1;">
+      <div class="card-title"><span class="dot"></span>Galería de imágenes</div>
+      <p style="font-size:.82rem;color:var(--ink-2);margin-bottom:20px;line-height:1.6">
+        Subí fotos de productos, logos o material que el modelo pueda usar y mostrar.
+      </p>
+
+      <div class="img-layout">
+
+        <!-- Izquierda: carga -->
+        <div class="img-upload-col">
+          <div class="inv-upload img-drop" id="imgDrop">
+            <input type="file" id="imgInput" multiple accept=".png,.jpg,.jpeg,.webp,.gif" onchange="handleImages(event)" />
+            <span class="inv-icon">🖼️</span>
+            <p>Arrastrá o hacé clic para subir imágenes<br/><strong>.png · .jpg · .webp · .gif</strong></p>
+          </div>
+          <div class="img-preview" id="imgPreview">
+            <span class="img-preview-empty">Seleccioná una imagen de la lista para verla acá.</span>
+          </div>
+        </div>
+
+        <!-- Derecha: lista + buscador + organizador -->
+        <div class="img-list-col">
+          <div class="img-toolbar">
+            <input type="text" id="imgSearch" placeholder="🔍 Buscar por nombre…" oninput="renderImageList()" />
+            <select id="imgSort" onchange="renderImageList()" title="Ordenar imágenes">
+              <option value="recent">Más recientes</option>
+              <option value="oldest">Más antiguas</option>
+              <option value="az">Nombre A → Z</option>
+              <option value="za">Nombre Z → A</option>
+              <option value="size-desc">Más pesadas</option>
+              <option value="size-asc">Más livianas</option>
+            </select>
+          </div>
+          <p class="img-count" id="imgCount">0 imágenes</p>
+          <div class="img-list" id="imgList"></div>
+        </div>
+
+      </div>
+    </div>
+
     <!-- ════ REDES SOCIALES — full width ════ -->
     <div class="card" style="animation-delay:.28s; grid-column: 1 / -1;">
       <div class="card-title"><span class="dot"></span>Redes sociales del modelo</div>

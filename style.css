@@ -401,3 +401,37 @@
     }
     .social-row.has-error { border-color: #e74c3c !important; }
     .social-row.has-error .social-error { display: block; }
+
+    /* ── galería de imágenes ── */
+    .img-layout { display: grid; grid-template-columns: 1fr 1.3fr; gap: 24px; }
+    .img-upload-col { display: flex; flex-direction: column; gap: 14px; }
+    .img-drop { padding: 28px 20px; }
+    .img-preview {
+      flex: 1; min-height: 180px; border-radius: var(--radius-sm);
+      border: 1px solid var(--beige-3); background: rgba(255,255,255,.35);
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .img-preview img { max-width: 100%; max-height: 260px; object-fit: contain; display: block; }
+    .img-preview-empty { font-size: .78rem; color: var(--ink-2); font-style: italic; padding: 16px; text-align: center; }
+
+    .img-list-col { display: flex; flex-direction: column; min-width: 0; }
+    .img-toolbar { display: grid; grid-template-columns: 1fr 170px; gap: 10px; }
+    .img-count { font-size: .72rem; color: var(--ink-2); margin: 10px 0 8px; letter-spacing: .04em; text-transform: uppercase; font-weight: 500; }
+    .img-list { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; padding-right: 4px; }
+    .img-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--beige-3); background: rgba(255,255,255,.45);
+      cursor: pointer; transition: border-color .2s, background .2s;
+    }
+    .img-item:hover, .img-item.active { border-color: var(--green-2); background: rgba(200,245,208,.15); }
+    .img-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--beige-2); }
+    .img-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .img-name { font-size: .82rem; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .img-meta { font-size: .72rem; color: var(--ink-2); }
+    .img-empty { font-size: .78rem; color: var(--ink-2); font-style: italic; padding: 12px 0; }
+
+    @media (max-width: 640px) {
+      .img-layout { grid-template-columns: 1fr; }
+      .img-toolbar { grid-template-columns: 1fr; }
+    }

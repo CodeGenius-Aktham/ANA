@@ -53,6 +53,7 @@ const CONFIG = {
 
   ALLOWED_DOC_TYPES: ['.pdf', '.doc', '.docx', '.txt', '.csv'],
   ALLOWED_INV_TYPES: ['.csv', '.xlsx', '.xls', '.json', '.doc', '.docx', '.pdf', '.txt', '.ods', '.odt', '.tsv', '.xml'],
+  ALLOWED_IMG_TYPES: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
   MAX_FILE_SIZE_MB:  10,
 
   /** URL debe ser http(s) válida — usado por la conexión de inventario externo */
@@ -74,6 +75,9 @@ const state = {
   role:         'Vendedor',
   companyInfo:  {},
   docs:         [],
+
+  /** Galería: { id, name, size, type, addedAt, url (object URL para la miniatura) } */
+  images:       [],
 
   /**
    * Inventario:
@@ -625,6 +629,148 @@ function removeDoc(btn, name) {
 }
 
 /* ─────────────────────────────────────────────
+   GALERÍA DE IMÁGENES
+   Izquierda: carga (click o drag & drop) + vista previa.
+   Derecha:   lista con buscador por nombre y organizador.
+───────────────────────────────────────────── */
+let imageIdSeq = 0;
+let selectedImageId = null;
+
+function handleImages(event) {
+  const files = Array.from(event.target?.files ?? event); // acepta Event o FileList (drag&drop)
+  files.forEach(file => {
+    const check = Security.validateFile(file, CONFIG.ALLOWED_IMG_TYPES);
+    if (!check.ok) { alert(check.msg); return; }
+    if (!file.type.startsWith('image/')) { alert(`${file.name} no es una imagen válida.`); return; }
+
+    const safeName = Security.sanitizeForJson(file.name, 255);
+    if (!safeName || state.images.find(i => i.name === safeName && i.size === file.size)) return;
+
+    state.images.push({
+      id:      ++imageIdSeq,
+      name:    safeName,
+      size:    file.size,
+      type:    file.type,
+      addedAt: Date.now(),
+      url:     URL.createObjectURL(file),
+    });
+
+    /* ── Ejemplo de subida real con UploadClient ──
+    const fd = new FormData();
+    fd.append('image', file);
+    UploadClient.post('/empresa/imagenes', fd, (pct) => {
+      console.log(`Subiendo ${safeName}… ${pct}%`);
+    }).catch(err => console.error('Error subiendo imagen:', err.message));
+    ── fin ejemplo ── */
+  });
+  if (event.target) event.target.value = '';
+  renderImageList();
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024)        return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const IMAGE_SORTERS = {
+  'recent':    (a, b) => b.addedAt - a.addedAt || b.id - a.id,
+  'oldest':    (a, b) => a.addedAt - b.addedAt || a.id - b.id,
+  'az':        (a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base', numeric: true }),
+  'za':        (a, b) => b.name.localeCompare(a.name, 'es', { sensitivity: 'base', numeric: true }),
+  'size-desc': (a, b) => b.size - a.size,
+  'size-asc':  (a, b) => a.size - b.size,
+};
+
+/** Normaliza para buscar sin importar mayúsculas ni tildes. */
+function normalizeSearch(text) {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function renderImageList() {
+  const list  = document.getElementById('imgList');
+  const count = document.getElementById('imgCount');
+  if (!list) return;
+
+  const query  = normalizeSearch(document.getElementById('imgSearch').value);
+  const sorter = IMAGE_SORTERS[document.getElementById('imgSort').value] || IMAGE_SORTERS.recent;
+
+  const visible = state.images
+    .filter(img => normalizeSearch(img.name).includes(query))
+    .sort(sorter);
+
+  const total = state.images.length;
+  count.textContent = query
+    ? `${visible.length} de ${total} ${total === 1 ? 'imagen' : 'imágenes'}`
+    : `${total} ${total === 1 ? 'imagen' : 'imágenes'}`;
+
+  list.replaceChildren();
+
+  if (!visible.length) {
+    list.appendChild(createElement('p', {
+      className:   'img-empty',
+      textContent: total ? 'Ninguna imagen coincide con la búsqueda.' : 'Todavía no subiste imágenes.',
+    }));
+    return;
+  }
+
+  visible.forEach(img => {
+    const thumb = createElement('img', { className: 'img-thumb', src: img.url, alt: img.name });
+    const name  = createElement('span', { className: 'img-name', textContent: img.name, title: img.name });
+    const date  = new Date(img.addedAt).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short' });
+    const meta  = createElement('span', { className: 'img-meta', textContent: `${formatSize(img.size)} · ${date}` });
+    const info  = createElement('div', { className: 'img-info' }, [name, meta]);
+
+    const removeBtn = createElement('button', { className: 'doc-remove', ariaLabel: `Eliminar ${img.name}` });
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', e => { e.stopPropagation(); removeImage(img.id); });
+
+    const item = createElement('div', {
+      className: 'img-item' + (img.id === selectedImageId ? ' active' : ''),
+    }, [thumb, info, removeBtn]);
+    item.addEventListener('click', () => selectImage(img.id));
+    list.appendChild(item);
+  });
+}
+
+function selectImage(id) {
+  selectedImageId = id;
+  renderImagePreview();
+  renderImageList();
+}
+
+function renderImagePreview() {
+  const preview = document.getElementById('imgPreview');
+  const img     = state.images.find(i => i.id === selectedImageId);
+  preview.replaceChildren(img
+    ? createElement('img', { src: img.url, alt: img.name })
+    : createElement('span', {
+        className:   'img-preview-empty',
+        textContent: 'Seleccioná una imagen de la lista para verla acá.',
+      }));
+}
+
+function removeImage(id) {
+  const img = state.images.find(i => i.id === id);
+  if (img) URL.revokeObjectURL(img.url);
+  state.images = state.images.filter(i => i.id !== id);
+  if (selectedImageId === id) { selectedImageId = null; renderImagePreview(); }
+  renderImageList();
+}
+
+function setupImageDragDrop() {
+  const el = document.getElementById('imgDrop');
+  if (!el) return;
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    el.classList.remove('drag-over');
+    if (e.dataTransfer?.files?.length) handleImages(e.dataTransfer.files);
+  });
+}
+
+/* ─────────────────────────────────────────────
    INVENTARIO
    Dos modos, cada uno con conexión real y feedback visual:
 
@@ -1093,5 +1239,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   setupInventoryDragDrop();
+  setupImageDragDrop();
+  renderImageList();
   renderOrb();
 });
