@@ -429,6 +429,15 @@
     .img-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
     .img-name { font-size: .82rem; font-weight: 500; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .img-meta { font-size: .72rem; color: var(--ink-2); }
+    .img-status { font-size: .7rem; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+    .img-status.uploading { color: var(--ink-2); }
+    .img-status.uploaded  { color: var(--green-3); }
+    .img-status.error     { color: #c0392b; }
+    .img-retry {
+      background: none; border: none; padding: 0; cursor: pointer;
+      font-family: 'DM Sans', sans-serif; font-size: .7rem; font-weight: 600;
+      color: var(--green-3); text-decoration: underline;
+    }
     .img-empty { font-size: .78rem; color: var(--ink-2); font-style: italic; padding: 12px 0; }
 
     @media (max-width: 640px) {

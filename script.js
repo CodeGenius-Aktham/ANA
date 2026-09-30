@@ -25,6 +25,8 @@ const CONFIG = {
    *   POST   BASE_URL + /inventario/externo      (JSON { url, key }) — guarda la conexión
    *   DELETE BASE_URL + /inventario/load
    *   DELETE BASE_URL + /inventario/externo
+   *   POST   BASE_URL + /inventario/images_inventory (multipart, campo "images_inventory", una imagen por petición)
+   *   DELETE BASE_URL + /inventario/images_inventory/<nombre_imagen>
    */
   BASE_URL: 'https://559a-186-29-72-11.ngrok-free.app',
 
@@ -96,7 +98,15 @@ const state = {
       testing:   false,
     },
 
-    /** Galería: { id, name, size, type, addedAt, url (object URL para la miniatura) } */
+    /**
+     * Galería: { id, name, size, type, addedAt,
+     *            url       → object URL local, solo para miniatura/vista previa
+     *            status    → 'uploading' | 'uploaded' | 'error'
+     *            progress  → 0-100 mientras sube
+     *            serverUrl → url devuelta por el backend (si la devuelve)
+     *            file      → File original, se guarda hasta que la subida termina OK (para reintentar) }
+     * Cada imagen se sube sola apenas se agrega (POST /inventario/images_inventory).
+     */
     images_inventory: [],
   },
 
@@ -208,7 +218,8 @@ const Security = {
    *       "key": "sk_live_xxxxxxxxxxxx"
    *     },
    *     "images_inventory": [
-   *       { "name": "bomba_chocolate.jpg", "size": 184320, "type": "image/jpeg" }
+   *       { "name": "bomba_chocolate.jpg", "size": 184320, "type": "image/jpeg",
+   *         "url": "https://…/bomba_chocolate.jpg" }
    *     ]
    *   },
    *   "isActive": true
@@ -216,8 +227,10 @@ const Security = {
    *
    * Nota: "inventory.own" e "inventory.external" solo aparecen cuando
    * state.inventory.own.connected / state.inventory.external.connected
-   * son true. "inventory.images_inventory" solo aparece si hay imágenes
-   * en la galería. Si no hay nada, "inventory" se envía como {}.
+   * son true. "inventory.images_inventory" solo lista las imágenes que ya
+   * se subieron OK (los archivos viajan antes, uno por uno, a
+   * POST /inventario/images_inventory); "url" aparece si el backend la
+   * devolvió al subir. Si no hay nada, "inventory" se envía como {}.
    */
   buildPayload() {
     const activeSocials = {};
@@ -240,12 +253,18 @@ const Security = {
         key: Security.sanitizeForJson(state.inventory.external.key, CONFIG.MAX_LENGTHS.invKey),
       };
     }
-    if (state.inventory.images_inventory.length) {
-      inventory.images_inventory = state.inventory.images_inventory.map(img => ({
-        name: Security.sanitizeForJson(img.name, 255),
-        size: img.size,
-        type: Security.sanitizeForJson(img.type, 50),
-      }));
+    // Solo metadata: los archivos ya se subieron por separado a /inventario/images_inventory
+    const uploadedImages = state.inventory.images_inventory.filter(img => img.status === 'uploaded');
+    if (uploadedImages.length) {
+      inventory.images_inventory = uploadedImages.map(img => {
+        const meta = {
+          name: Security.sanitizeForJson(img.name, 255),
+          size: img.size,
+          type: Security.sanitizeForJson(img.type, 50),
+        };
+        if (img.serverUrl) meta.url = Security.sanitizeForJson(img.serverUrl, CONFIG.MAX_LENGTHS.invUrl);
+        return meta;
+      });
     }
 
     return {
@@ -347,6 +366,8 @@ const UploadClient = (() => {
      POST   /inventario/externo         (JSON { url, key })
      DELETE /inventario/load
      DELETE /inventario/externo
+     POST   /inventario/images_inventory            (multipart, ver UploadClient)
+     DELETE /inventario/images_inventory/<nombre_imagen>
 
    Uso:
      ApiClient.searchEmpresa('Bomba Dulce')
@@ -446,6 +467,10 @@ const ApiClient = (() => {
     /** Elimina el inventario propio subido. */
     disconnectOwnInventory: () =>
       request('DELETE', '/inventario/load'),
+
+    /** Elimina del backend una imagen ya subida de images_inventory. */
+    deleteInventoryImage: (nombreImagen) =>
+      request('DELETE', `/inventario/images_inventory/${encodeURIComponent(nombreImagen)}`),
   };
 })();
 
@@ -657,24 +682,55 @@ function handleImages(event) {
     const safeName = Security.sanitizeForJson(file.name, 255);
     if (!safeName || state.inventory.images_inventory.find(i => i.name === safeName && i.size === file.size)) return;
 
-    state.inventory.images_inventory.push({
-      id:      ++imageIdSeq,
-      name:    safeName,
-      size:    file.size,
-      type:    file.type,
-      addedAt: Date.now(),
-      url:     URL.createObjectURL(file),
-    });
-
-    /* ── Ejemplo de subida real con UploadClient ──
-    const fd = new FormData();
-    fd.append('images_inventory', file);
-    UploadClient.post('/inventario/images_inventory', fd, (pct) => {
-      console.log(`Subiendo ${safeName}… ${pct}%`);
-    }).catch(err => console.error('Error subiendo imagen:', err.message));
-    ── fin ejemplo ── */
+    const img = {
+      id:        ++imageIdSeq,
+      name:      safeName,
+      size:      file.size,
+      type:      file.type,
+      addedAt:   Date.now(),
+      url:       URL.createObjectURL(file),
+      status:    'uploading',
+      progress:  0,
+      serverUrl: '',
+      file,
+    };
+    state.inventory.images_inventory.push(img);
+    uploadInventoryImage(img);
   });
   if (event.target) event.target.value = '';
+  renderImageList();
+}
+
+/** Sube una imagen sola al backend con progreso. Se usa al agregarla y al reintentar. */
+async function uploadInventoryImage(img) {
+  img.status   = 'uploading';
+  img.progress = 0;
+  renderImageList();
+
+  const fd = new FormData();
+  fd.append('images_inventory', img.file, img.name);
+
+  try {
+    const res = await UploadClient.post('/inventario/images_inventory', fd, (pct) => {
+      img.progress = pct;
+      renderImageList();
+    });
+
+    // Si la quitaron de la lista mientras subía, la borramos también del backend
+    if (!state.inventory.images_inventory.includes(img)) {
+      ApiClient.deleteInventoryImage(img.name)
+        .catch(err => console.error('[ANA] Error eliminando imagen:', err.message));
+      return;
+    }
+
+    img.status    = 'uploaded';
+    img.progress  = 100;
+    img.serverUrl = typeof res?.url === 'string' ? res.url : '';
+    img.file      = null; // ya está en el servidor, no hace falta guardar el archivo
+  } catch (err) {
+    console.error(`[ANA] Error subiendo imagen ${img.name}:`, err.message);
+    img.status = 'error';
+  }
   renderImageList();
 }
 
@@ -730,7 +786,7 @@ function renderImageList() {
     const name  = createElement('span', { className: 'img-name', textContent: img.name, title: img.name });
     const date  = new Date(img.addedAt).toLocaleString('es', { dateStyle: 'short', timeStyle: 'short' });
     const meta  = createElement('span', { className: 'img-meta', textContent: `${formatSize(img.size)} · ${date}` });
-    const info  = createElement('div', { className: 'img-info' }, [name, meta]);
+    const info  = createElement('div', { className: 'img-info' }, [name, meta, renderImageStatus(img)]);
 
     const removeBtn = createElement('button', { className: 'doc-remove', ariaLabel: `Eliminar ${img.name}` });
     removeBtn.textContent = '×';
@@ -742,6 +798,25 @@ function renderImageList() {
     item.addEventListener('click', () => selectImage(img.id));
     list.appendChild(item);
   });
+}
+
+const IMAGE_STATUS_TEXT = {
+  uploading: img => `Subiendo… ${img.progress}%`,
+  uploaded:  ()  => '✓ Subida',
+  error:     ()  => 'Error al subir',
+};
+
+function renderImageStatus(img) {
+  const status = createElement('span', {
+    className:   `img-status ${img.status}`,
+    textContent: IMAGE_STATUS_TEXT[img.status](img),
+  });
+  if (img.status === 'error') {
+    const retryBtn = createElement('button', { className: 'img-retry', textContent: 'Reintentar' });
+    retryBtn.addEventListener('click', e => { e.stopPropagation(); uploadInventoryImage(img); });
+    status.appendChild(retryBtn);
+  }
+  return status;
 }
 
 function selectImage(id) {
@@ -763,7 +838,14 @@ function renderImagePreview() {
 
 function removeImage(id) {
   const img = state.inventory.images_inventory.find(i => i.id === id);
-  if (img) URL.revokeObjectURL(img.url);
+  if (img) {
+    URL.revokeObjectURL(img.url);
+    // Si sigue subiendo, uploadInventoryImage() la borra del backend al terminar
+    if (img.status === 'uploaded') {
+      ApiClient.deleteInventoryImage(img.name)
+        .catch(err => console.error('[ANA] Error eliminando imagen:', err.message));
+    }
+  }
   state.inventory.images_inventory = state.inventory.images_inventory.filter(i => i.id !== id);
   if (selectedImageId === id) { selectedImageId = null; renderImagePreview(); }
   renderImageList();
@@ -1176,6 +1258,11 @@ async function saveConfig() {
     values:  document.getElementById('companyValues').value,
     // La sanitización final ocurre en buildPayload()
   };
+
+  if (state.inventory.images_inventory.some(img => img.status === 'uploading')) {
+    alert('Esperá a que terminen de subir las imágenes antes de guardar.');
+    return;
+  }
 
   const payload = Security.buildPayload();
 
